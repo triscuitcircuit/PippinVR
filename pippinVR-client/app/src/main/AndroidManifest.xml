@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <uses-feature android:name="android.hardware.vr.headtracking"
+        android:required="true"
+        android:version="1" />
+
+    <uses-feature android:name="oculus.software.handtracking" android:required="false" />
+    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />
+
+    <application
+        android:label="PippinVr"
+        android:allowBackup="false"
+        android:hasCode="false"
+        android:extractNativeLibs="true">
+
+        <meta-data android:name="com.oculus.supported_devices"
+            android:value="quest2|questpro|quest3" />
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:label="PippinVr"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:excludeFromRecents="false"
+            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density">
+
+            <meta-data android:name="android.app.lib_name" android:value="pippinvr_client" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.oculus.intent.category.VR" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

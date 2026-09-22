@@ -1,0 +1,6 @@
+/pippinVR-Server/.swiftpm/
+/gradle/
+/pippinVR-client/app/build/
+/pippinVR-client/build/
+/pippinVR-client/gradle/
+/pippinVR-client/app/.cxx/
