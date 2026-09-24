@@ -1,0 +1,108 @@
+included:
+  - pippinVR-Server/Sources
+
+excluded:
+  - pippinVR-Server/.build
+  - pippinVR-Server/PippinVR.app
+  - pippinVR-Server/AppIcon.iconset
+
+disabled_rules:
+  - line_length
+  - trailing_whitespace
+  - todo
+
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - fatal_error_message
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - multiline_function_chains
+  - multiline_parameters
+  - overridden_super_call
+  - redundant_nil_coalescing
+  - sorted_imports
+  - unneeded_parentheses_in_closure_argument
+  - vertical_whitespace_closing_braces
+  - vertical_whitespace_opening_braces
+
+force_cast: warning
+force_try: warning
+force_unwrapping: warning
+
+line_length:
+  warning: 120
+  error: 150
+  ignores_function_declarations: true
+  ignores_comments: true
+  ignores_urls: true
+
+function_body_length:
+  warning: 50
+  error: 100
+
+# File length
+file_length:
+  warning: 500
+  error: 1000
+  ignore_comment_only_lines: true
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+  ignores_case_statements: true
+
+nesting:
+  type_level:
+    warning: 2
+
+identifier_name:
+  min_length:
+    warning: 2
+    error: 1
+  max_length:
+    warning: 50
+    error: 60
+  excluded:
+    - id
+    - x
+    - y
+    - z
+    - w
+    - h
+    - fd
+    - ms
+    - ns
+    - i
+    - j
+    - k
+
+type_name:
+  min_length: 3
+  max_length:
+    warning: 40
+    error: 50
+  excluded:
+    - ID
+    - URL
+
+custom_rules:
+  prefer_struct:
+    name: "Prefer Struct"
+    regex: "^\\s*class\\s+(?!.*:\\s*(NSObject|ObservableObject))"
+    message: "Consider using a struct instead of a class"
+    severity: warning
+
+  operator_spacing:
+    name: "Operator Spacing"
+    regex: "\\S(==|!=|<=|>=|\\+|-|\\*|/)\\S"
+    message: "Operators should have spaces around them"
+    severity: warning
+
+  force_unwrap_production:
+    name: "Force Unwrap in Production"
+    regex: "!\\s*(\\/\\/|$)"
+    message: "Avoid force unwrapping in production code"
+    severity: warning
+
+reporter: "xcode"

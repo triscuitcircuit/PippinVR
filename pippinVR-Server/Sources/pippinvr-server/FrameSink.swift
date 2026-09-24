@@ -1,10 +1,10 @@
-
 import Foundation
 import Network
 
 protocol FrameSink: AnyObject {
     func start(streams: [StreamDescriptor]) throws
     func send(frame: EncodedFrame, streamID: UInt8)
+    func reconfigure(streams: [StreamDescriptor])
     func stop()
 
     var onClientConnected: (@Sendable () -> Void)? { get set }
@@ -15,6 +15,7 @@ protocol FrameSink: AnyObject {
 }
 
 // MARK: File verification with sink
+
 final class FileFrameSink: FrameSink {
     private let basePath: String
     private var handles: [UInt8: FileHandle] = [:]
@@ -44,7 +45,11 @@ final class FileFrameSink: FrameSink {
     }
 
     func send(frame: EncodedFrame, streamID: UInt8) {
-        handles[streamID]?.write(frame.data) /
+        handles[streamID]?.write(frame.data)
+    }
+
+    func reconfigure(streams _: [StreamDescriptor]) {
+        FileHandle.standardError.write(Data("FileFrameSink: reconfigure not supported for file output\n".utf8))
     }
 
     func stop() {
@@ -72,8 +77,8 @@ enum FrameSinkError: Error, CustomStringConvertible {
 }
 
 // MARK: Wire transport using TCP
-final class TCPFrameSink: FrameSink, @unchecked Sendable {
 
+final class TCPFrameSink: FrameSink, @unchecked Sendable {
     private static let maxInFlightBytes = 8 * 1024 * 1024
 
     private let port: UInt16
@@ -160,7 +165,6 @@ final class TCPFrameSink: FrameSink, @unchecked Sendable {
         lock.lock()
         guard let conn = _connection else { lock.unlock(); return } // no client: drop
 
-        // Hold back until this stream's first decodable frame.
         if _awaitingKeyframe.contains(streamID) {
             guard frame.isKeyframe else { lock.unlock(); return }
             _awaitingKeyframe.remove(streamID)
@@ -187,6 +191,27 @@ final class TCPFrameSink: FrameSink, @unchecked Sendable {
             _inFlight -= packet.count
             lock.unlock()
         })
+    }
+
+    func reconfigure(streams: [StreamDescriptor]) {
+        lock.lock()
+        guard let conn = _connection else {
+            lock.unlock()
+            FileHandle.standardError.write(Data("TCPFrameSink: reconfigure requested but no client connected\n".utf8))
+            return
+        }
+
+        _streams = streams
+        _awaitingKeyframe = Set(streams.map(\.id))
+
+        let packet = WireFormat.reconfigurationPacket(streams)
+        let count = streams.count
+        lock.unlock()
+
+        conn.send(content: packet, completion: .contentProcessed { _ in })
+        FileHandle.standardError.write(
+            Data("TCPFrameSink: sent reconfiguration packet for \(count) stream(s)\n".utf8)
+        )
     }
 
     func stop() {

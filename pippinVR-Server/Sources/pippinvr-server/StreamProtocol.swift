@@ -13,10 +13,15 @@ struct StreamDescriptor {
 
 enum WireFormat {
     static let magic: [UInt8] = Array("MVRS".utf8)
-    static let version: UInt16 = 2
+    static let version: UInt16 = 3
 
     static let keyframeFlag: UInt8 = 0x01
     static let hiDPIFlag: UInt8 = 0x01
+
+    enum PacketType: UInt8 {
+        case frame = 0x00
+        case reconfiguration = 0xFF
+    }
 
     static func sessionHeader(_ streams: [StreamDescriptor]) -> Data {
         var d = Data()
@@ -48,6 +53,30 @@ enum WireFormat {
         d.appendBE(UInt32(frame.data.count))
         d.appendBE(frame.pts.microseconds)
         d.append(frame.data)
+        return d
+    }
+
+    static func reconfigurationPacket(_ streams: [StreamDescriptor]) -> Data {
+        var d = Data()
+        d.append(PacketType.reconfiguration.rawValue)
+        d.appendBE(UInt16(streams.count))
+
+        for s in streams {
+            var nameBytes = Array(s.name.utf8)
+            if nameBytes.count > Int(UInt8.max) {
+                nameBytes = Array(nameBytes.prefix(Int(UInt8.max)))
+            }
+
+            d.append(s.id)
+            d.append(s.codec.wireID)
+            d.appendBE(UInt16(clamping: s.width))
+            d.appendBE(UInt16(clamping: s.height))
+            d.appendBE(UInt16(clamping: Int(s.refreshHz.rounded())))
+            d.append(s.hiDPI ? hiDPIFlag : UInt8(0))
+            d.append(UInt8(nameBytes.count))
+            d.append(contentsOf: nameBytes)
+        }
+
         return d
     }
 }

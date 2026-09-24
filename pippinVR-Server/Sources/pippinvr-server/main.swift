@@ -1,6 +1,3 @@
-// Over the cable, to a Quest with developer mode on:
-//   pippinvr-server --config pippinvr.json --tcp 9943 --adb-reverse
-
 import AppKit
 import Foundation
 
@@ -26,13 +23,15 @@ pippinvr-server
                        lost on reboot and replug, which is the usual reason the
                        headset silently fails to connect.
   --no-menu-bar        do not install the menu bar item
+  --no-dock-icon       run as background accessory (status bar only, no dock icon)
+  --gui                run as dock application with menu bar (default if no args)
 
   --print-config       print the effective config as JSON and exit
   --help               this message
 
 """
 
-func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool) {
+func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool, dockIcon: Bool) {
     let args = CommandLine.arguments
     func value(_ flag: String) -> String? {
         guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
@@ -47,24 +46,11 @@ func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool) {
         exit(0)
     }
 
-    var config: ServerConfig
-    if let path = value("--config") {
-        do {
-            config = try ServerConfig.load(path: path)
-        } catch {
-            FileHandle.standardError.write(Data("fatal: cannot load \(path): \(error)\n".utf8))
-            exit(1)
-        }
-    } else {
-        config = ServerConfig()
-        // Without a config file, keep the historical 10s default so a bare run
-        // terminates on its own.
-        config.durationSeconds = 10
-    }
+    let (loadedConfig, configPath) = ServerConfig.loadOrCreate(path: value("--config"))
+    var config = loadedConfig
 
-    // --- server-level overrides ---
     if let c = value("--codec") {
-        config.codec = (c.lowercased() == "h264") ? .h264 : .hevc
+        config.codec = (c.lowercased() == "h264") ? CodecType.h264 : CodecType.hevc
     }
     if let b = value("--bitrate"), let mbps = Int(b) {
         config.bitrateMbps = mbps
@@ -87,8 +73,6 @@ func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool) {
             config.displays[i].height = height
         }
     }
-    // --displays N clones the first entry N times, giving each a distinct name so the
-    // client (and System Settings) can tell them apart.
     if let n = value("--displays"), let count = Int(n), count > 0 {
         let template = config.displays.first ?? DisplayEntry()
         config.displays = (0 ..< count).map { i in
@@ -99,25 +83,47 @@ func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool) {
     }
 
     var options = PipelineOptions(config: config)
+    options.configPath = configPath
+
+    var sinkExplicitlySet = false
     if let p = value("--tcp"), let port = UInt16(p) {
         options.config.port = port
-        options.sink = .tcp(port: port)
+        options.sink = PipelineOptions.SinkKind.tcp(port: port)
+        sinkExplicitlySet = true
     } else if let path = value("--file") {
-        options.sink = .file(path: path)
+        options.sink = PipelineOptions.SinkKind.file(path: path)
+        sinkExplicitlySet = true
     } else if has("--tcp") {
-        options.sink = .tcp(port: config.port)
+        options.sink = PipelineOptions.SinkKind.tcp(port: config.port)
+        sinkExplicitlySet = true
     }
 
-    options.waitForClient = !has("--eager-displays")
+    let hasAnyFlag = args.count > 1 && args[1 ..< args.count].contains { $0.hasPrefix("--") }
+    let wantDockIcon = has("--gui") || (!hasAnyFlag && !has("--no-dock-icon"))
+    let wantMenuBar = !has("--no-menu-bar")
+    let isGUIMode = wantMenuBar || wantDockIcon
+
+    if has("--eager-displays") {
+        options.waitForClient = false
+    } else if isGUIMode {
+        options.waitForClient = false
+    } else {
+        options.waitForClient = true
+    }
+
     options.adbReverse = has("--adb-reverse")
     if let t = value("--client-timeout"), let seconds = Double(t) {
         options.clientTimeoutSeconds = seconds
     }
 
-    return (options, printOnly: has("--print-config"), menuBar: !has("--no-menu-bar"))
+    if !sinkExplicitlySet, isGUIMode {
+        options.sink = PipelineOptions.SinkKind.tcp(port: config.port)
+    }
+
+    return (options, printOnly: has("--print-config"), menuBar: wantMenuBar, dockIcon: wantDockIcon)
 }
 
-let (options, printOnly, wantMenuBar) = parseArgs()
+let (options, printOnly, wantMenuBar, wantDockIcon) = parseArgs()
 
 if printOnly {
     let enc = JSONEncoder()
@@ -128,9 +134,6 @@ if printOnly {
     exit(0)
 }
 
-// Held so the signal handler and the menu bar can tear the virtual displays down:
-// they persist for as long as the CGVirtualDisplay object lives, so exiting without
-// shutdown() leaves phantom displays attached until the process is reaped.
 nonisolated(unsafe) var activeSession: PipelineSession?
 nonisolated(unsafe) var shuttingDown = false
 nonisolated(unsafe) var signalSources: [DispatchSourceSignal] = []
@@ -138,7 +141,7 @@ nonisolated(unsafe) var signalSources: [DispatchSourceSignal] = []
 @Sendable func beginShutdown(exitCode: Int32) {
     if shuttingDown {
         exit(exitCode)
-    } // second request: hard exit
+    }
     shuttingDown = true
     FileHandle.standardError.write(Data("\n[pipeline] shutting down\n".utf8))
     let session = activeSession
@@ -151,7 +154,7 @@ nonisolated(unsafe) var signalSources: [DispatchSourceSignal] = []
 
 func installSignalHandlers() {
     for sig in [SIGINT, SIGTERM] {
-        signal(sig, SIG_IGN) // ignore the default action; the source below handles it
+        signal(sig, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
         src.setEventHandler { beginShutdown(exitCode: 0) }
         src.resume()
@@ -164,13 +167,6 @@ installSignalHandlers()
 let session = PipelineSession(options: options)
 activeSession = session
 
-// The menu bar item needs AppKit's event loop, so this becomes an NSApplication with
-// .accessory policy: a menu bar presence, no Dock icon, no bundle required. That loop
-// also services the main dispatch queue, which CGVirtualDisplay and the capture
-// callbacks depend on -- so it replaces dispatchMain() rather than competing with it.
-//
-// We must NOT block the main thread (e.g. with a semaphore): starving the main queue
-// deadlocks display setup.
 Task { @MainActor in
     var statusController: StatusItemController?
     if wantMenuBar {
@@ -192,9 +188,9 @@ Task { @MainActor in
     exit(0)
 }
 
-if wantMenuBar {
+if wantMenuBar || wantDockIcon {
     let app = NSApplication.shared
-    app.setActivationPolicy(.accessory)
+    app.setActivationPolicy(wantDockIcon ? .regular : .accessory)
     app.run()
 } else {
     dispatchMain()

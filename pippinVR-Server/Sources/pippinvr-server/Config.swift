@@ -35,17 +35,16 @@ struct DisplayEntry: Codable {
     var refreshHz: Double = 60.0
     var hiDPI: Bool = true
 
-    var codec: CodecType? = nil
-    var bitrateMbps: Int? = nil
-    var fps: Int? = nil
+    var codec: CodecType?
+    var bitrateMbps: Int?
+    var fps: Int?
 
     enum CodingKeys: String, CodingKey {
         case name, width, height, refreshHz, hiDPI, codec, bitrateMbps, fps
     }
 
     init(name: String = "pippinvr-display", width: Int = 2560, height: Int = 1440,
-         refreshHz: Double = 60.0, hiDPI: Bool = true)
-    {
+         refreshHz: Double = 60.0, hiDPI: Bool = true) {
         self.name = name; self.width = width; self.height = height
         self.refreshHz = refreshHz; self.hiDPI = hiDPI
     }
@@ -80,10 +79,11 @@ struct DisplayEntry: Codable {
         d.height = height
         d.refreshHz = refreshHz
         d.hiDPI = hiDPI
+        d.productID = UInt32(0x1230 + index)
+        d.vendorID = UInt32(0x3450 + index)
         d.serial = UInt32(0x1000 + index)
         return d
     }
-    
 }
 
 // MARK: Server Configuration
@@ -93,7 +93,7 @@ struct ServerConfig: Codable {
     var codec: CodecType = .hevc
     var bitrateMbps: Int = 40
     var fps: Int = 60
-    var keyframeIntervalFrames: Int? = nil
+    var keyframeIntervalFrames: Int?
     var durationSeconds: Double = 0
     var displays: [DisplayEntry] = [DisplayEntry(name: "pippinvr-main")]
 
@@ -130,6 +130,85 @@ struct ServerConfig: Codable {
     static func load(path: String) throws -> ServerConfig {
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
         return try JSONDecoder().decode(ServerConfig.self, from: data)
+    }
+
+    func save(to path: String) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(self)
+        try data.write(to: URL(fileURLWithPath: path))
+    }
+
+    static func defaultConfig() -> ServerConfig {
+        var config = ServerConfig()
+        config.displays = [
+            DisplayEntry(name: "pippinvr-main", width: 2560, height: 1440, refreshHz: 60.0, hiDPI: true),
+            DisplayEntry(name: "Left", width: 1080, height: 1920, refreshHz: 60.0, hiDPI: false),
+            DisplayEntry(name: "Right", width: 1920, height: 1080, refreshHz: 60.0, hiDPI: false)
+        ]
+        return config
+    }
+
+    static func defaultConfigPath() -> String {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let pippinDir = appSupport.appendingPathComponent("PippinVR")
+        try? FileManager.default.createDirectory(at: pippinDir, withIntermediateDirectories: true)
+        return pippinDir.appendingPathComponent("config.json").path
+    }
+
+    static func loadOrCreate(path: String?) -> (ServerConfig, String) {
+        let configPath = path ?? defaultConfigPath()
+        if FileManager.default.fileExists(atPath: configPath) {
+            do {
+                let config = try ServerConfig.load(path: configPath)
+                return (config, configPath)
+            } catch {
+                FileHandle.standardError.write(Data("warning: failed to load \(configPath): \(error)\n".utf8))
+            }
+        }
+
+        if let templatePath = findTemplateConfig() {
+            do {
+                let config = try ServerConfig.load(path: templatePath)
+                try config.save(to: configPath)
+                FileHandle.standardError.write(Data("[config] created default config from template at \(configPath)\n".utf8))
+                return (config, configPath)
+            } catch {
+                FileHandle.standardError.write(Data("warning: failed to load template \(templatePath): \(error)\n".utf8))
+            }
+        }
+
+        let config = ServerConfig()
+        do {
+            try config.save(to: configPath)
+            FileHandle.standardError.write(Data("[config] created default config at \(configPath)\n".utf8))
+        } catch {
+            FileHandle.standardError.write(Data("warning: failed to save default config: \(error)\n".utf8))
+        }
+        return (config, configPath)
+    }
+
+    private static func findTemplateConfig() -> String? {
+        if let bundlePath = Bundle.main.resourcePath {
+            let resourcePath = (bundlePath as NSString).appendingPathComponent("pippinvr.example.json")
+            if FileManager.default.fileExists(atPath: resourcePath) {
+                return resourcePath
+            }
+        }
+
+        let localPaths = [
+            "pippinvr.example.json",
+            "./pippinvr.example.json",
+            "../pippinvr.example.json"
+        ]
+
+        for path in localPaths {
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+
+        return nil
     }
 
     func encoderConfig(for entry: DisplayEntry) -> EncoderConfig {

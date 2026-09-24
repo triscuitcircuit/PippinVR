@@ -1,7 +1,6 @@
+import AppKit
 import CoreMedia
 import Foundation
-import AppKit
-
 
 @MainActor
 func showModalError(title: String, message: String) {
@@ -14,10 +13,9 @@ func showModalError(title: String, message: String) {
     alert.runModal()
 }
 
-
-
 struct PipelineOptions {
     var config = ServerConfig()
+    var configPath: String?
     var sink: SinkKind = .file(path: "/tmp/pippin-out.h265")
 
     var waitForClient = true
@@ -64,8 +62,17 @@ final class PipelineSession: @unchecked Sendable {
     var displayNames: [(String, Int, Int)] {
         options.config.displays.map { ($0.name, $0.width, $0.height) }
     }
+
     var displays: [DisplayEntry] {
         options.config.displays
+    }
+
+    var configPath: String? {
+        options.configPath
+    }
+
+    var config: ServerConfig {
+        options.config
     }
 
     func requestStop() {
@@ -78,6 +85,88 @@ final class PipelineSession: @unchecked Sendable {
     private var stopRequested: Bool {
         stateLock.lock(); defer { stateLock.unlock() }
         return _stopRequested
+    }
+
+    func reconfigure(displays: [DisplayEntry]) async throws {
+        guard sink != nil else {
+            throw ReconfigurationError.notRunning
+        }
+
+        guard isStreaming else {
+            throw ReconfigurationError.notStreaming
+        }
+
+        options.config.displays = displays
+
+        try options.config.validate()
+
+        let descriptors = displays.enumerated().map { index, entry in
+            StreamDescriptor(id: UInt8(index),
+                             codec: options.config.encoderConfig(for: entry).codec,
+                             width: entry.width,
+                             height: entry.height,
+                             refreshHz: entry.refreshHz,
+                             hiDPI: entry.hiDPI,
+                             name: entry.name)
+        }
+
+        let current = pipelinesSnapshot()
+        for pipeline in current {
+            await pipeline.shutdown()
+        }
+
+        var built: [DisplayPipeline] = []
+        for (index, entry) in displays.enumerated() {
+            let pipeline = DisplayPipeline(streamID: UInt8(index),
+                                           entry: entry,
+                                           encoderConfig: options.config.encoderConfig(for: entry))
+            pipeline.onLog = { [weak self] message in self?.log(message) }
+            try pipeline.createDisplay(index: index)
+            built.append(pipeline)
+        }
+
+        setPipelines(built, streaming: true)
+
+        try await Task.sleep(nanoseconds: 700_000_000)
+
+        let capturedSink = sink
+        for pipeline in built {
+            pipeline.onEncodedFrame = { frame, streamID in
+                capturedSink?.send(frame: frame, streamID: streamID)
+            }
+        }
+
+        for pipeline in built {
+            try await pipeline.startCapture()
+        }
+
+        sink?.reconfigure(streams: descriptors)
+
+        if let path = options.configPath {
+            try? options.config.save(to: path)
+            log("reconfigured with \(displays.count) display(s), saved to \(path)")
+        } else {
+            log("reconfigured with \(displays.count) display(s)")
+        }
+    }
+
+    enum ReconfigurationError: Error, CustomStringConvertible {
+        case notRunning
+        case notStreaming
+
+        var description: String {
+            switch self {
+            case .notRunning:
+                "reconfiguration failed: session not running"
+            case .notStreaming:
+                "reconfiguration failed: not currently streaming"
+            }
+        }
+    }
+
+    func resetToDefault() async throws {
+        let defaultConfig = ServerConfig.defaultConfig()
+        try await reconfigure(displays: defaultConfig.displays)
     }
 
     // MARK: Runtime
@@ -283,7 +372,7 @@ final class PipelineSession: @unchecked Sendable {
         let candidates = [
             "\(NSHomeDirectory())/Library/Android/sdk/platform-tools/adb",
             "/opt/homebrew/bin/adb",
-            "/usr/local/bin/adb",
+            "/usr/local/bin/adb"
         ]
         guard let adb = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
             log("adb not found; skipping `adb reverse` (looked in Android SDK and Homebrew)")
@@ -315,7 +404,6 @@ final class PipelineSession: @unchecked Sendable {
             DispatchQueue.main.async {
                 showModalError(title: "ADB Command Failed", message: errorMsg)
             }
-
         }
     }
 

@@ -1,8 +1,8 @@
 #include "XrApp.h"
+
 #include "Log.h"
 
 #include <android_native_app_glue.h>
-
 #include <cmath>
 #include <cstring>
 
@@ -13,10 +13,10 @@ namespace {
 /// each. Roughly a comfortable multi-monitor desk setup.
 constexpr float kPanelDistanceMeters = 2.0f;
 constexpr float kPanelWidthMeters = 1.6f;
-constexpr float kPanelGapRadians = 0.62f;   // ~35 degrees between panel centres
+constexpr float kPanelGapRadians = 0.62f;  // ~35 degrees between panel centres
 
-constexpr int64_t kFormatSRGBA8 = 0x8C43;   // GL_SRGB8_ALPHA8
-constexpr int64_t kFormatRGBA8 = 0x8058;    // GL_RGBA8
+constexpr int64_t kFormatSRGBA8 = 0x8C43;  // GL_SRGB8_ALPHA8
+constexpr int64_t kFormatRGBA8 = 0x8058;   // GL_RGBA8
 
 /// Handle bar geometry. The bar hangs just above the panel's top edge and shares
 /// its orientation, so it reads as part of the window.
@@ -33,14 +33,18 @@ constexpr float kBarRotateZoneWidth = 0.12f;
 constexpr float kBarFaceZoneWidth = 0.10f;
 
 BarZone zoneAtU(float u) {
-    if (u < kBarRotateZoneWidth) return BarZone::RotateLeft;
-    if (u > 1.0f - kBarRotateZoneWidth) return BarZone::RotateRight;
-    if (u > 1.0f - kBarRotateZoneWidth - kBarFaceZoneWidth) return BarZone::FaceMe;
+    if (u < kBarRotateZoneWidth)
+        return BarZone::RotateLeft;
+    if (u > 1.0f - kBarRotateZoneWidth)
+        return BarZone::RotateRight;
+    if (u > 1.0f - kBarRotateZoneWidth - kBarFaceZoneWidth)
+        return BarZone::FaceMe;
     return BarZone::Drag;
 }
 
 bool xrCheck(XrResult result, const char* what) {
-    if (XR_SUCCEEDED(result)) return true;
+    if (XR_SUCCEEDED(result))
+        return true;
     LOGE("%s failed: XrResult %d", what, static_cast<int>(result));
     return false;
 }
@@ -65,9 +69,9 @@ bool XrApp::createInstance(android_app* app) {
     app_ = app;
 
     PFN_xrInitializeLoaderKHR xrInitializeLoaderKHR = nullptr;
-    if (XR_FAILED(xrGetInstanceProcAddr(
-            XR_NULL_HANDLE, "xrInitializeLoaderKHR",
-            reinterpret_cast<PFN_xrVoidFunction*>(&xrInitializeLoaderKHR))) ||
+    if (XR_FAILED(
+            xrGetInstanceProcAddr(XR_NULL_HANDLE, "xrInitializeLoaderKHR",
+                                  reinterpret_cast<PFN_xrVoidFunction*>(&xrInitializeLoaderKHR))) ||
         xrInitializeLoaderKHR == nullptr) {
         LOGE("xrInitializeLoaderKHR unavailable -- no OpenXR runtime installed?");
         return false;
@@ -97,7 +101,8 @@ bool XrApp::createInstance(android_app* app) {
 
         auto supported = [&](const char* name) {
             for (const auto& property : available) {
-                if (std::strcmp(property.extensionName, name) == 0) return true;
+                if (std::strcmp(property.extensionName, name) == 0)
+                    return true;
             }
             return false;
         };
@@ -128,8 +133,7 @@ bool XrApp::createInstance(android_app* app) {
     std::strncpy(createInfo.applicationInfo.applicationName, "PippinVr",
                  XR_MAX_APPLICATION_NAME_SIZE - 1);
     createInfo.applicationInfo.applicationVersion = 1;
-    std::strncpy(createInfo.applicationInfo.engineName, "pippinvr",
-                 XR_MAX_ENGINE_NAME_SIZE - 1);
+    std::strncpy(createInfo.applicationInfo.engineName, "pippinvr", XR_MAX_ENGINE_NAME_SIZE - 1);
     createInfo.applicationInfo.engineVersion = 1;
     createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
 
@@ -165,24 +169,33 @@ bool XrApp::initEgl() {
         return false;
     }
 
-    const EGLint configAttribs[] = {
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
-        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, 0, EGL_STENCIL_SIZE, 0,
-        EGL_NONE};
+    const EGLint configAttribs[] = {EGL_RENDERABLE_TYPE,
+                                    EGL_OPENGL_ES3_BIT_KHR,
+                                    EGL_SURFACE_TYPE,
+                                    EGL_PBUFFER_BIT,
+                                    EGL_RED_SIZE,
+                                    8,
+                                    EGL_GREEN_SIZE,
+                                    8,
+                                    EGL_BLUE_SIZE,
+                                    8,
+                                    EGL_ALPHA_SIZE,
+                                    8,
+                                    EGL_DEPTH_SIZE,
+                                    0,
+                                    EGL_STENCIL_SIZE,
+                                    0,
+                                    EGL_NONE};
 
     EGLint numConfigs = 0;
-    if (eglChooseConfig(eglDisplay_, configAttribs, &eglConfig_, 1, &numConfigs) !=
-            EGL_TRUE ||
+    if (eglChooseConfig(eglDisplay_, configAttribs, &eglConfig_, 1, &numConfigs) != EGL_TRUE ||
         numConfigs < 1) {
         LOGE("eglChooseConfig found no usable config");
         return false;
     }
 
     const EGLint contextAttribs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
-    eglContext_ = eglCreateContext(eglDisplay_, eglConfig_, EGL_NO_CONTEXT,
-                                   contextAttribs);
+    eglContext_ = eglCreateContext(eglDisplay_, eglConfig_, EGL_NO_CONTEXT, contextAttribs);
     if (eglContext_ == EGL_NO_CONTEXT) {
         LOGE("eglCreateContext failed (0x%04x)", eglGetError());
         return false;
@@ -205,10 +218,13 @@ bool XrApp::initEgl() {
 }
 
 void XrApp::destroyEgl() {
-    if (eglDisplay_ == EGL_NO_DISPLAY) return;
+    if (eglDisplay_ == EGL_NO_DISPLAY)
+        return;
     eglMakeCurrent(eglDisplay_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    if (eglSurface_ != EGL_NO_SURFACE) eglDestroySurface(eglDisplay_, eglSurface_);
-    if (eglContext_ != EGL_NO_CONTEXT) eglDestroyContext(eglDisplay_, eglContext_);
+    if (eglSurface_ != EGL_NO_SURFACE)
+        eglDestroySurface(eglDisplay_, eglSurface_);
+    if (eglContext_ != EGL_NO_CONTEXT)
+        eglDestroyContext(eglDisplay_, eglContext_);
     eglTerminate(eglDisplay_);
     eglSurface_ = EGL_NO_SURFACE;
     eglContext_ = EGL_NO_CONTEXT;
@@ -216,26 +232,26 @@ void XrApp::destroyEgl() {
 }
 
 bool XrApp::createSession() {
-    if (session_ != XR_NULL_HANDLE) return true;
+    if (session_ != XR_NULL_HANDLE)
+        return true;
 
     // Required by spec before session creation, even though we ignore the versions.
     PFN_xrGetOpenGLESGraphicsRequirementsKHR getRequirements = nullptr;
-    if (XR_FAILED(xrGetInstanceProcAddr(
-            instance_, "xrGetOpenGLESGraphicsRequirementsKHR",
-            reinterpret_cast<PFN_xrVoidFunction*>(&getRequirements))) ||
+    if (XR_FAILED(xrGetInstanceProcAddr(instance_, "xrGetOpenGLESGraphicsRequirementsKHR",
+                                        reinterpret_cast<PFN_xrVoidFunction*>(&getRequirements))) ||
         getRequirements == nullptr) {
         LOGE("xrGetOpenGLESGraphicsRequirementsKHR unavailable");
         return false;
     }
-    XrGraphicsRequirementsOpenGLESKHR requirements{
-        XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR};
+    XrGraphicsRequirementsOpenGLESKHR requirements{XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR};
     getRequirements(instance_, systemId_, &requirements);
 
-    if (!initEgl()) return false;
-    if (!renderer_.init()) return false;
+    if (!initEgl())
+        return false;
+    if (!renderer_.init())
+        return false;
 
-    XrGraphicsBindingOpenGLESAndroidKHR binding{
-        XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR};
+    XrGraphicsBindingOpenGLESAndroidKHR binding{XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR};
     binding.display = eglDisplay_;
     binding.config = eglConfig_;
     binding.context = eglContext_;
@@ -243,8 +259,7 @@ bool XrApp::createSession() {
     XrSessionCreateInfo createInfo{XR_TYPE_SESSION_CREATE_INFO};
     createInfo.next = &binding;
     createInfo.systemId = systemId_;
-    if (!xrCheck(xrCreateSession(instance_, &createInfo, &session_),
-                 "xrCreateSession")) {
+    if (!xrCheck(xrCreateSession(instance_, &createInfo, &session_), "xrCreateSession")) {
         return false;
     }
 
@@ -253,8 +268,7 @@ bool XrApp::createSession() {
     XrReferenceSpaceCreateInfo spaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
     spaceInfo.poseInReferenceSpace = identityPose();
-    if (!xrCheck(xrCreateReferenceSpace(session_, &spaceInfo, &space_),
-                 "xrCreateReferenceSpace")) {
+    if (!xrCheck(xrCreateReferenceSpace(session_, &spaceInfo, &space_), "xrCreateReferenceSpace")) {
         return false;
     }
 
@@ -279,8 +293,10 @@ bool XrApp::createSession() {
 
 void XrApp::destroySession() {
     for (Panel& panel : panels_) {
-        if (panel.swapchain != XR_NULL_HANDLE) xrDestroySwapchain(panel.swapchain);
-        if (panel.barSwapchain != XR_NULL_HANDLE) xrDestroySwapchain(panel.barSwapchain);
+        if (panel.swapchain != XR_NULL_HANDLE)
+            xrDestroySwapchain(panel.swapchain);
+        if (panel.barSwapchain != XR_NULL_HANDLE)
+            xrDestroySwapchain(panel.barSwapchain);
     }
     panels_.clear();
     {
@@ -315,6 +331,20 @@ void XrApp::onStreams(const std::vector<StreamInfo>& streams) {
     LOGI("session header: %zu stream(s) pending panel setup", streams.size());
 }
 
+void XrApp::onConnectionStatus(bool connected, const char* message) {
+    std::lock_guard<std::mutex> lock(statusMutex_);
+    connected_ = connected;
+    statusMessage_ = message;
+
+    if (!connected) {
+        std::lock_guard<std::mutex> streamLock(streamsMutex_);
+        pendingStreams_.clear();
+        streamsDirty_ = true;
+    }
+
+    LOGI("connection status: %s - %s", connected ? "connected" : "disconnected", message);
+}
+
 void XrApp::onFrame(FramePacket&& packet) {
     std::lock_guard<std::mutex> lock(decodersMutex_);
     for (auto& decoder : decoders_) {
@@ -327,28 +357,27 @@ void XrApp::onFrame(FramePacket&& packet) {
 
 int64_t XrApp::chooseSwapchainFormat() const {
     uint32_t count = 0;
-    if (XR_FAILED(xrEnumerateSwapchainFormats(session_, 0, &count, nullptr)) ||
-        count == 0) {
+    if (XR_FAILED(xrEnumerateSwapchainFormats(session_, 0, &count, nullptr)) || count == 0) {
         return kFormatRGBA8;
     }
     std::vector<int64_t> formats(count);
-    if (XR_FAILED(xrEnumerateSwapchainFormats(session_, count, &count,
-                                              formats.data()))) {
+    if (XR_FAILED(xrEnumerateSwapchainFormats(session_, count, &count, formats.data()))) {
         return kFormatRGBA8;
     }
     for (int64_t format : formats) {
-        if (format == kFormatSRGBA8) return format;
+        if (format == kFormatSRGBA8)
+            return format;
     }
     for (int64_t format : formats) {
-        if (format == kFormatRGBA8) return format;
+        if (format == kFormatRGBA8)
+            return format;
     }
     return formats.front();
 }
 
 bool XrApp::createSwapchainFor(Panel& panel, int64_t format) {
     XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-    info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT |
-                      XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+    info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
     info.format = format;
     info.sampleCount = 1;
     info.width = static_cast<uint32_t>(panel.width);
@@ -357,8 +386,7 @@ bool XrApp::createSwapchainFor(Panel& panel, int64_t format) {
     info.arraySize = 1;
     info.mipCount = 1;
 
-    if (!xrCheck(xrCreateSwapchain(session_, &info, &panel.swapchain),
-                 "xrCreateSwapchain")) {
+    if (!xrCheck(xrCreateSwapchain(session_, &info, &panel.swapchain), "xrCreateSwapchain")) {
         return false;
     }
 
@@ -369,8 +397,7 @@ bool XrApp::createSwapchainFor(Panel& panel, int64_t format) {
     }
 
     panel.images.assign(imageCount,
-                        XrSwapchainImageOpenGLESKHR{
-                            XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
+                        XrSwapchainImageOpenGLESKHR{XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
     if (!xrCheck(xrEnumerateSwapchainImages(
                      panel.swapchain, imageCount, &imageCount,
                      reinterpret_cast<XrSwapchainImageBaseHeader*>(panel.images.data())),
@@ -378,15 +405,14 @@ bool XrApp::createSwapchainFor(Panel& panel, int64_t format) {
         return false;
     }
 
-    LOGI("stream %u: swapchain %dx%d, %u images", panel.streamId, panel.width,
-         panel.height, imageCount);
+    LOGI("stream %u: swapchain %dx%d, %u images", panel.streamId, panel.width, panel.height,
+         imageCount);
     return true;
 }
 
 bool XrApp::createBarSwapchainFor(Panel& panel, int64_t format) {
     XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-    info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT |
-                      XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+    info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
     info.format = format;
     info.sampleCount = 1;
     info.width = static_cast<uint32_t>(kBarTexWidth);
@@ -405,30 +431,28 @@ bool XrApp::createBarSwapchainFor(Panel& panel, int64_t format) {
                  "xrEnumerateSwapchainImages(bar)")) {
         return false;
     }
-    panel.barImages.assign(
-        imageCount, XrSwapchainImageOpenGLESKHR{XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
-    return xrCheck(
-        xrEnumerateSwapchainImages(
-            panel.barSwapchain, imageCount, &imageCount,
-            reinterpret_cast<XrSwapchainImageBaseHeader*>(panel.barImages.data())),
-        "xrEnumerateSwapchainImages(bar)");
+    panel.barImages.assign(imageCount,
+                           XrSwapchainImageOpenGLESKHR{XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
+    return xrCheck(xrEnumerateSwapchainImages(
+                       panel.barSwapchain, imageCount, &imageCount,
+                       reinterpret_cast<XrSwapchainImageBaseHeader*>(panel.barImages.data())),
+                   "xrEnumerateSwapchainImages(bar)");
 }
 
 void XrApp::renderPanelBar(Panel& panel) {
-    if (panel.barSwapchain == XR_NULL_HANDLE) return;
+    if (panel.barSwapchain == XR_NULL_HANDLE)
+        return;
 
     uint32_t imageIndex = 0;
     XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-    if (XR_FAILED(xrAcquireSwapchainImage(panel.barSwapchain, &acquireInfo,
-                                          &imageIndex))) {
+    if (XR_FAILED(xrAcquireSwapchainImage(panel.barSwapchain, &acquireInfo, &imageIndex))) {
         return;
     }
 
     XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
     waitInfo.timeout = XR_INFINITE_DURATION;
     if (XR_SUCCEEDED(xrWaitSwapchainImage(panel.barSwapchain, &waitInfo))) {
-        renderer_.drawPanelBar(panel.barImages[imageIndex].image, kBarTexWidth,
-                               kBarTexHeight,
+        renderer_.drawPanelBar(panel.barImages[imageIndex].image, kBarTexWidth, kBarTexHeight,
                                static_cast<int32_t>(panel.hoveredZone),
                                static_cast<int32_t>(panel.activeZone));
     }
@@ -439,7 +463,8 @@ void XrApp::renderPanelBar(Panel& panel) {
 
 void XrApp::layOutPanels() {
     const size_t count = panels_.size();
-    if (count == 0) return;
+    if (count == 0)
+        return;
 
     const float startAngle = -kPanelGapRadians * (static_cast<float>(count) - 1.0f) / 2.0f;
 
@@ -449,11 +474,9 @@ void XrApp::layOutPanels() {
 
         panel.pose.position = glm::vec3(kPanelDistanceMeters * std::sin(angle), 0.0f,
                                         -kPanelDistanceMeters * std::cos(angle));
-        panel.pose.orientation =
-            glm::angleAxis(angle, glm::vec3(0.0f, 1.0f, 0.0f));
+        panel.pose.orientation = glm::angleAxis(angle, glm::vec3(0.0f, 1.0f, 0.0f));
 
-        const float aspect = static_cast<float>(panel.height) /
-                             static_cast<float>(panel.width);
+        const float aspect = static_cast<float>(panel.height) / static_cast<float>(panel.width);
         panel.size.width = kPanelWidthMeters;
         panel.size.height = kPanelWidthMeters * aspect;
     }
@@ -465,38 +488,42 @@ void XrApp::yawPanel(Panel& panel, float radians) {
 }
 
 void XrApp::facePanelToViewer(Panel& panel) {
-    if (viewSpace_ == XR_NULL_HANDLE) return;
+    if (viewSpace_ == XR_NULL_HANDLE)
+        return;
 
     XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
-    if (XR_FAILED(xrLocateSpace(viewSpace_, space_, frameState_.predictedDisplayTime,
-                                &location))) {
+    if (XR_FAILED(xrLocateSpace(viewSpace_, space_, frameState_.predictedDisplayTime, &location))) {
         return;
     }
-    if ((location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) == 0) return;
+    if ((location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) == 0)
+        return;
 
     const glm::vec3 toViewer = toGlm(location.pose.position) - panel.pose.position;
     const glm::vec2 flat(toViewer.x, toViewer.z);
-    if (glm::length(flat) < 1e-4f) return;
+    if (glm::length(flat) < 1e-4f)
+        return;
 
     const float yaw = std::atan2(flat.x, flat.y);
     panel.pose.orientation = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
-BarZone XrApp::pickBarZone(const glm::vec3& origin, const glm::vec3& direction,
-                           size_t* hitPanel, float* hitDistance) const {
+BarZone XrApp::pickBarZone(const glm::vec3& origin, const glm::vec3& direction, size_t* hitPanel,
+                           float* hitDistance) const {
     BarZone best = BarZone::None;
     float bestDistance = 0.0f;
 
     for (size_t i = 0; i < panels_.size(); ++i) {
         const Panel& panel = panels_[i];
-        if (panel.barSwapchain == XR_NULL_HANDLE) continue;
+        if (panel.barSwapchain == XR_NULL_HANDLE)
+            continue;
 
         float distance = 0.0f;
         if (!rayQuadIntersect(origin, direction, panel.barPose, panel.barSize.width,
                               panel.barSize.height, &distance)) {
             continue;
         }
-        if (best != BarZone::None && distance >= bestDistance) continue;
+        if (best != BarZone::None && distance >= bestDistance)
+            continue;
 
         // Recover the hit point in bar-local space to work out which zone it is.
         const glm::vec3 hit = origin + direction * distance;
@@ -554,9 +581,8 @@ void XrApp::updateHandGrab(Hand hand, Grab& grab) {
 
             for (size_t i = 0; i < panels_.size(); ++i) {
                 float distance = 0.0f;
-                if (rayQuadIntersect(origin, direction, panels_[i].pose,
-                                     panels_[i].size.width, panels_[i].size.height,
-                                     &distance)) {
+                if (rayQuadIntersect(origin, direction, panels_[i].pose, panels_[i].size.width,
+                                     panels_[i].size.height, &distance)) {
                     if (!hitAny || distance < bestDistance) {
                         bestDistance = distance;
                         bestIndex = i;
@@ -582,7 +608,8 @@ void XrApp::updateHandGrab(Hand hand, Grab& grab) {
         return;
     }
 
-    if (!grab.active) return;
+    if (!grab.active)
+        return;
     if (grab.panelIndex >= panels_.size()) {
         grab.active = false;
         return;
@@ -605,8 +632,8 @@ void XrApp::updateHandGrab(Hand hand, Grab& grab) {
     if (state.thumbstickY != 0.0f) {
         constexpr float kPushMetersPerFrame = 0.02f;
         const float previous = grab.distance;
-        grab.distance = glm::clamp(
-            grab.distance + state.thumbstickY * kPushMetersPerFrame, 0.35f, 8.0f);
+        grab.distance =
+            glm::clamp(grab.distance + state.thumbstickY * kPushMetersPerFrame, 0.35f, 8.0f);
 
         const float offsetLength = glm::length(grab.panelInHand.position);
         if (previous > 1e-4f && offsetLength > 1e-4f) {
@@ -619,8 +646,7 @@ void XrApp::updateHandGrab(Hand hand, Grab& grab) {
 
 void XrApp::updateBarPoses() {
     for (Panel& panel : panels_) {
-        const float offsetY =
-            panel.size.height * 0.5f + kBarGapMeters + kBarHeightMeters * 0.5f;
+        const float offsetY = panel.size.height * 0.5f + kBarGapMeters + kBarHeightMeters * 0.5f;
         panel.barPose.orientation = panel.pose.orientation;
         panel.barPose.position =
             panel.pose.position + panel.pose.orientation * glm::vec3(0.0f, offsetY, 0.0f);
@@ -630,10 +656,12 @@ void XrApp::updateBarPoses() {
 }
 
 void XrApp::updateManipulation() {
-    if (input_.backgroundCyclePressed()) background_.cycleMode();
+    if (input_.backgroundCyclePressed())
+        background_.cycleMode();
     if (input_.layoutResetPressed()) {
         layOutPanels();
-        for (Grab& grab : grabs_) grab.active = false;
+        for (Grab& grab : grabs_)
+            grab.active = false;
         LOGI("panel layout reset");
     }
 
@@ -652,14 +680,17 @@ bool XrApp::buildPanels() {
     std::vector<StreamInfo> streams;
     {
         std::lock_guard<std::mutex> lock(streamsMutex_);
-        if (!streamsDirty_) return true;
+        if (!streamsDirty_)
+            return true;
         streams = pendingStreams_;
         streamsDirty_ = false;
     }
 
     for (Panel& panel : panels_) {
-        if (panel.swapchain != XR_NULL_HANDLE) xrDestroySwapchain(panel.swapchain);
-        if (panel.barSwapchain != XR_NULL_HANDLE) xrDestroySwapchain(panel.barSwapchain);
+        if (panel.swapchain != XR_NULL_HANDLE)
+            xrDestroySwapchain(panel.swapchain);
+        if (panel.barSwapchain != XR_NULL_HANDLE)
+            xrDestroySwapchain(panel.barSwapchain);
     }
     panels_.clear();
     {
@@ -722,8 +753,7 @@ void XrApp::renderPanel(Panel& panel) {
     }
 
     const GLuint texture = panel.images[imageIndex].image;
-    AHardwareBuffer* buffer =
-        panel.decoder != nullptr ? panel.decoder->acquireLatest() : nullptr;
+    AHardwareBuffer* buffer = panel.decoder != nullptr ? panel.decoder->acquireLatest() : nullptr;
 
     if (buffer != nullptr) {
         renderer_.blit(buffer, texture, panel.width, panel.height);
@@ -737,14 +767,17 @@ void XrApp::renderPanel(Panel& panel) {
 }
 
 void XrApp::renderFrame() {
-    if (!sessionRunning_) return;
+    if (!sessionRunning_)
+        return;
 
     XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
     frameState_ = XrFrameState{XR_TYPE_FRAME_STATE};
-    if (XR_FAILED(xrWaitFrame(session_, &waitInfo, &frameState_))) return;
+    if (XR_FAILED(xrWaitFrame(session_, &waitInfo, &frameState_)))
+        return;
 
     XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
-    if (XR_FAILED(xrBeginFrame(session_, &beginInfo))) return;
+    if (XR_FAILED(xrBeginFrame(session_, &beginInfo)))
+        return;
 
     // Panels are (re)built on the render thread so all GL/XR calls stay on one thread.
     buildPanels();
@@ -790,9 +823,8 @@ void XrApp::renderFrame() {
                 quads.push_back(bar);
             }
         }
-        for (XrCompositionLayerQuad& quad : quads) {
-            layers.push_back(
-                reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad));
+        for (size_t i = 0; i < quads.size(); ++i) {
+            layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quads[i]));
         }
     }
 
@@ -819,8 +851,10 @@ bool XrApp::pollEvents(bool* exitRequested) {
     for (;;) {
         event = XrEventDataBuffer{XR_TYPE_EVENT_DATA_BUFFER};
         const XrResult result = xrPollEvent(instance_, &event);
-        if (result == XR_EVENT_UNAVAILABLE) break;
-        if (XR_FAILED(result)) return false;
+        if (result == XR_EVENT_UNAVAILABLE)
+            break;
+        if (XR_FAILED(result))
+            return false;
 
         switch (event.type) {
             case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
@@ -838,8 +872,7 @@ bool XrApp::pollEvents(bool* exitRequested) {
                     XrSessionBeginInfo beginInfo{XR_TYPE_SESSION_BEGIN_INFO};
                     beginInfo.primaryViewConfigurationType =
                         XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-                    if (xrCheck(xrBeginSession(session_, &beginInfo),
-                                "xrBeginSession")) {
+                    if (xrCheck(xrBeginSession(session_, &beginInfo), "xrBeginSession")) {
                         sessionRunning_ = true;
                     }
                 } else if (sessionState_ == XR_SESSION_STATE_STOPPING) {
@@ -860,4 +893,4 @@ bool XrApp::pollEvents(bool* exitRequested) {
     return true;
 }
 
-}
+}  // namespace pippinvr

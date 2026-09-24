@@ -31,9 +31,11 @@ struct StreamInfo {
 };
 
 class StreamClient {
-public:
+   public:
     using HeaderFn = std::function<void(const std::vector<StreamInfo>&)>;
-    using FrameFn  = std::function<void(FramePacket&&)>;
+    using FrameFn = std::function<void(FramePacket&&)>;
+    using ReconfigureFn = std::function<void(const std::vector<StreamInfo>&)>;
+    using StatusFn = std::function<void(bool connected, const char* message)>;
 
     StreamClient(std::string host, uint16_t port);
     ~StreamClient();
@@ -41,12 +43,13 @@ public:
     StreamClient(const StreamClient&) = delete;
     StreamClient& operator=(const StreamClient&) = delete;
 
-    void start(HeaderFn onHeader, FrameFn onFrame);
+    void start(HeaderFn onHeader, FrameFn onFrame, ReconfigureFn onReconfigure = nullptr,
+               StatusFn onStatus = nullptr);
     void stop();
 
     bool connected() const { return connected_.load(std::memory_order_relaxed); }
 
-private:
+   private:
     void runLoop();
     bool connectOnce();
     void closeSocket();
@@ -54,6 +57,7 @@ private:
     bool readExact(void* dst, size_t n);
     bool readSessionHeader(std::vector<StreamInfo>& out);
     bool readFrame(FramePacket& out);
+    bool readReconfiguration(std::vector<StreamInfo>& out);
 
     std::string host_;
     uint16_t port_;
@@ -65,8 +69,10 @@ private:
 
     HeaderFn onHeader_;
     FrameFn onFrame_;
+    ReconfigureFn onReconfigure_;
+    StatusFn onStatus_;
 };
 
-}
+}  // namespace pippinvr
 
 #endif  // PIPPINVR_NET_H

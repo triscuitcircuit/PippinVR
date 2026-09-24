@@ -23,9 +23,9 @@ final class StatusItemController {
 
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "visionpro",
-                accessibilityDescription: "PippinVr")
-            ?? NSImage(systemSymbolName: "display",
-                accessibilityDescription: "PippinVr")
+                                   accessibilityDescription: "PippinVr")
+                ?? NSImage(systemSymbolName: "display",
+                           accessibilityDescription: "PippinVr")
             button.image?.isTemplate = true
         }
 
@@ -66,8 +66,8 @@ final class StatusItemController {
         menu.addItem(withTitle: status, action: nil, keyEquivalent: "")
 
         let display_count = streaming
-        ? "\(session.configuredDisplayCount) virtual display(s) active"
-        : "No virtual displays created"
+            ? "\(session.configuredDisplayCount) virtual display(s) active"
+            : "No virtual displays created"
         let display_names = streaming ? session.displayNames : [("No virtual displays created", 0, 0)]
         menu.addItem(withTitle: display_count, action: nil, keyEquivalent: "")
 
@@ -85,11 +85,16 @@ final class StatusItemController {
         configItem.target = self
         menu.addItem(configItem)
 
+        let resetItem = NSMenuItem(title: "Reset to Default", action: #selector(resetToDefault), keyEquivalent: "")
+        resetItem.target = self
+        resetItem.isEnabled = streaming
+        menu.addItem(resetItem)
+
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "Quit PippinVr",
-            action: #selector(quitSelected),
-            keyEquivalent: "q")
+                              action: #selector(quitSelected),
+                              keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
 
@@ -99,10 +104,10 @@ final class StatusItemController {
             button.appearsDisabled = !streaming
         }
     }
-    
+
     @objc private func showConfigWindow() {
         if settingsViewController == nil {
-            let contentView = SettingsView(session: self.session)
+            let contentView = SettingsView(session: session)
 
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
@@ -120,6 +125,28 @@ final class StatusItemController {
 
         settingsViewController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func resetToDefault() {
+        Task { @MainActor in
+            do {
+                try await session.resetToDefault()
+
+                let alert = NSAlert()
+                alert.messageText = "Reset Complete"
+                alert.informativeText = "Configuration has been reset to 3 default displays."
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Reset Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
     }
 
     @objc private func quitSelected() {

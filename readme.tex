@@ -1,0 +1,148 @@
+% Created 2026-09-23 Wed 21:56
+% Intended LaTeX compiler: pdflatex
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{wrapfig}
+\usepackage{rotating}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{capt-of}
+\usepackage{hyperref}
+\documentclass[10pt,a4paper,showtrims]
+\hypersetup{colorlinks=true, urlcolor={blue}, linkcolor={blue}}
+\usepackage[labelfont=bf]{caption}
+\usepackage{tcolorbox}
+\author{Triscuitcircuit}
+\date{\today}
+\title{PippinVR\\\medskip
+\large Open Source VR Virtual Screens for MacOS}
+\hypersetup{
+ pdfauthor={Triscuitcircuit},
+ pdftitle={PippinVR},
+ pdfkeywords={},
+ pdfsubject={},
+ pdfcreator={Emacs 30.2 (Org mode 9.7.11)},
+ pdflang={English}}
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+\clearpage
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=.9\linewidth]{figures/pippin.png}
+\caption{The PippinVR mascot and icon, named Pippin. It is a happy shark in awe of the screens.}
+\end{figure}
+\begin{quote}
+“We are stuck with technology when what we really want is just stuff that works.”  - Douglas Adams
+\end{quote}
+\section{PippinVR}
+\label{sec:org7f16d57}
+\section{About}
+\label{sec:orgd98eb26}
+This project was created out of the frustration that all MacOS VR virtual screen software (\emph{Meta Quest Remote Desktop}, \emph{Immersed}) are proprietary pieces of software. If I have code recording my screen, I want to know what it is actually doing.
+
+\texttt{PippinVR} is named after the Apple Pippin, which itself was named after a relative to the McIntosh apple. The Apple Pippin was meant to be more than a platform just for game consoles, which is what I see VR to be as well.
+
+This code is under the GNUv3 license as I feel strongly that any derivatives of this software should also be Open Source. Contributions are welcome and encouraged.
+\begin{quote}
+"Given enough eyeballs, all bugs are shallow" - Eric S. Raymond (The Cathedral and the Bazaar)
+\end{quote}
+\subsection{Capabilities}
+\label{sec:org99c01cb}
+So far \texttt{PippinVR} can cast multiple screens from a Mac into a virtual space. It also has the ability to overlay the screens in passthrough, or cycle through settings with "B" (top button on a Meta Quest controller). The screens can be moved with the controller and placed individually.
+
+Menubar and taskbar icons are used so that you can easily shutoff the application when MacOS is stuck in virtual screen mode.
+
+A settings menu can be used the configure the screens, with a default configuration file being placed in \texttt{ApplicationSupport} upon installation.
+
+Dynamic framerate of each virtual screen conserves bandwidth using the wire.
+\section{Installation}
+\label{sec:org9639605}
+This respsitory contains both the \texttt{PippinVR-Server}, the server running on MacOS, and \texttt{PippinVR-Client}, a client running on a Meta headset.
+Because this code was created with wire transmission in mind, it makes use of Android Debug Bridge (adb) and SideQuest.
+\subsection{Requirements}
+\label{sec:org0ce0959}
+The following requirements are necessary for running \texttt{PippinVR}:
+\begin{itemize}
+\item \href{https://brew.sh/}{MacOS Homebrew}
+\item \href{https://sidequestvr.com/setup-howto}{SideQuest} (V 1.21)
+\item Meta VR Headset (Quest 2, Quest 3, Quest 3s) in Developer Mode. (tested on the Meta Quest 3).
+\item \href{https://formulae.brew.sh/formula/make\#default}{Make}
+\item \href{https://formulae.brew.sh/cask/android-platform-tools\#default}{Android Platform Tools}
+\item Xcode Command line tools (\texttt{xcode-select -{}-{}install})
+\item \href{https://developer.apple.com/swift/}{Swift} (V.60)
+\item \href{https://formulae.brew.sh/formula/gradle}{Gradle}
+\item MacOS (tested on MacOS 26.6)
+\end{itemize}
+\subsubsection{Pippin-VR Server}
+\label{sec:org7925b9e}
+This section is for the server aspect
+Make sure that \texttt{adb} is listening on the specifically bounded port for Pippin.
+\begin{verbatim}
+adb reverse tcp:9943 tcp:9943
+\end{verbatim}
+in the root directory of \texttt{PippinVR}, run the following command:
+\begin{verbatim}
+make install-server-app
+\end{verbatim}
+\begin{quote}
+{[}!NOTE]
+This installs \texttt{PippinVR.app} in the \texttt{/Applications} folders automatically.
+\end{quote}
+It should compile and install the server application as a `.app`. The first run will start the virtual screens and then quit out automatically. This is normal, as Pippin needs permission to record.
+
+\texttt{PippinVR} works by recording whats called "Virtual" (non-physical) screens and then sending them to the headset to display. Because it is recording screens, MacOS requires permissions for screen recording.
+\begin{quote}
+{[}!NOTE]
+To configure Screen recording for PippinVR, the following needs to be configured:
+   \texttt{System Settings -> Privacy \& Security -> Screen Recording}
+This setting needs to be changed  each time the app is recompiled.
+\end{quote}
+
+Pippin-VR server has a settings menu that can be accessed from the menu bar. The settings menu allows changing the screen configurations while displaying to the headset. Displays can be added or removed, with instant refresh once the settings have been applied.
+\subsubsection{Pippin-VR Client}
+\label{sec:orgee35afe}
+The client is what is run on the headset as an app, and is what displays the virtual screens in the headset.
+
+To build and install the client on the headset, the following make command calls upon `gradle` to build the android components. The client is created in C++, and relies on the \texttt{CMAKELISTS.TXT} to pull and build required packages (SOIL2 and GLM).
+\begin{verbatim}
+make install-client
+\end{verbatim}
+\section{Design}
+\label{sec:orgb948b55}
+The design of \texttt{PippinVR-server} is outlined as follows:
+\begin{center}
+\includegraphics[width=.9\linewidth]{figures/UML_DisplayCapture.png}
+\caption{Diagram representing PippinVR-server flow. \texttt{PipelineSession} handles information from the \texttt{VideoEncoder}, \texttt{ScreenCapture}, \texttt{FrameSink}, and \texttt{VirtualDisplay}.}
+\end{center}
+The server creates Virtual displays through the \texttt{CGVirtualDisplay}, sends it to the \texttt{VideoEncoder} and bundles it as an encoded frame to with a specific \texttt{StreamID} to send over the wire using the \texttt{MVRS} protocol. The frame data is encoded as big-endian, and decoded by the headset using stream identifiers.
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=.9\linewidth]{figures/UML_Lifetimes.png}
+\caption{Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to \texttt{FrameSink}}
+\end{figure}
+\subsection{Known Issues}
+\label{sec:org7f6f53b}
+\begin{itemize}
+\item More than three screens has issues of collision, causing the fourth "virtual" screen becoming the Mac screen. This is being worked on.
+\item Virtual Display positions are not saved after refresh/reboot.
+\item Meta Quest remote polling sometimes stops working after wake.
+\item Stale displays with old content will stay in the headset when the \texttt{PippinVR} app is disconnected.
+\end{itemize}
+\section{Contributing}
+\label{sec:org9beed48}
+Contributions are welcome and encouraged (as per the GNUv3 License). To contribute, make sure to use the \texttt{.pre-commit} file. To do so, make sure to install via \href{https://formulae.brew.sh/formula/pre-commit}{Homebrew}.
+\begin{verbatim}
+pre-commit install
+\end{verbatim}
+This project will take contributions in the form of pull-requests.
+\section{License}
+\label{sec:org2dc1f56}
+GNU GENERAL PUBLIC LICENSE VERSION 3 (GNUv3).
+\end{document}

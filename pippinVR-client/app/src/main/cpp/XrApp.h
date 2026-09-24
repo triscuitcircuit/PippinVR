@@ -1,25 +1,24 @@
 #ifndef PIPPINVR_XR_APP_H
 #define PIPPINVR_XR_APP_H
 
-#include <array>
-#include <cstdint>
-#include <memory>
-#include <mutex>
-#include <vector>
-
-#include <EGL/egl.h>
-#include <GLES3/gl3.h>
-#include <jni.h>
-
-#include <openxr/openxr.h>
-#include <openxr/openxr_platform.h>
-
 #include "Background.h"
 #include "Decoder.h"
 #include "Input.h"
 #include "Math.h"
 #include "Net.h"
 #include "Renderer.h"
+
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+
+#include <EGL/egl.h>
+#include <GLES3/gl3.h>
+#include <array>
+#include <cstdint>
+#include <jni.h>
+#include <memory>
+#include <mutex>
+#include <vector>
 
 struct android_app;
 
@@ -62,7 +61,7 @@ struct Grab {
 };
 
 class XrApp {
-public:
+   public:
     XrApp() = default;
     ~XrApp();
 
@@ -83,8 +82,9 @@ public:
 
     void onStreams(const std::vector<StreamInfo>& streams);
     void onFrame(FramePacket&& packet);
+    void onConnectionStatus(bool connected, const char* message);
 
-private:
+   private:
     bool initEgl();
     void destroyEgl();
     bool buildPanels();
@@ -97,8 +97,8 @@ private:
     void updateBarPoses();
     void updateManipulation();
     void updateHandGrab(Hand hand, Grab& grab);
-    BarZone pickBarZone(const glm::vec3& origin, const glm::vec3& direction,
-                        size_t* hitPanel, float* hitDistance) const;
+    BarZone pickBarZone(const glm::vec3& origin, const glm::vec3& direction, size_t* hitPanel,
+                        float* hitDistance) const;
     void yawPanel(Panel& panel, float radians);
 
     void facePanelToViewer(Panel& panel);
@@ -136,6 +136,9 @@ private:
     std::mutex decodersMutex_;
     std::vector<std::unique_ptr<StreamDecoder>> decoders_;
 
+    std::mutex statusMutex_;
+    bool connected_ = false;
+    std::string statusMessage_ = "Waiting for server...";
 
     std::vector<Panel> panels_;
 

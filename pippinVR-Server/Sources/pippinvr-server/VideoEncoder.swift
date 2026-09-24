@@ -21,18 +21,12 @@ struct EncoderConfig {
     var height: Int = 1440
     var bitrateBps: Int = 40_000_000
     var keyframeIntervalFrames: Int = 60
-    /// Upper bound in SECONDS between keyframes, independent of frame count.
-    ///
-    /// A frame-count interval alone is not enough: ScreenCaptureKit only delivers
-    /// frames when the screen changes, so an idle display runs at 1-3 fps and a
-    /// 60-frame interval stretches to 20-60 seconds of wall clock. A client that
-    /// attaches (or a decoder that needs to resync) would sit blank that whole time.
     var keyframeIntervalSeconds: Double = 2.0
     var realtime: Bool = true
 }
 
 struct EncodedFrame {
-    var data: Data // Annex-B NAL units (parameter sets prepended on keyframes)
+    var data: Data
     var pts: CMTime
     var isKeyframe: Bool
 }
@@ -46,17 +40,12 @@ enum VideoEncoderError: Error, CustomStringConvertible {
     }
 }
 
-/// `@unchecked Sendable`: `forceKeyframeNext` is lock-guarded, and the VideoToolbox
-/// session is itself thread-safe for encode/property calls.
 final class VideoEncoder: @unchecked Sendable {
     private var session: VTCompressionSession?
     private let config: EncoderConfig
 
-    /// Called from the VideoToolbox output callback thread for each encoded frame.
     var onEncodedFrame: ((EncodedFrame) -> Void)?
 
-    // Set from an arbitrary thread (the sink's network queue) and consumed on the
-    // capture thread, so it needs a lock.
     private let keyframeLock = NSLock()
     private var forceKeyframeNext = false
 
@@ -98,8 +87,6 @@ final class VideoEncoder: @unchecked Sendable {
         VTCompressionSessionPrepareToEncodeFrames(session)
     }
 
-    /// Ask for the next encoded frame to be an IDR. Used when a client connects so it
-    /// gets parameter sets + a decodable frame immediately instead of waiting out the GOP.
     func requestKeyframe() {
         keyframeLock.lock()
         forceKeyframeNext = true
@@ -144,7 +131,7 @@ final class VideoEncoder: @unchecked Sendable {
         session = nil
     }
 
-    // MARK: - output handling
+    // MARK: Handle Output
 
     private func handleEncoded(_ sampleBuffer: CMSampleBuffer) {
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
@@ -165,20 +152,17 @@ final class VideoEncoder: @unchecked Sendable {
                                                                         createIfNecessary: false)
             as? [[CFString: Any]], let first = attachments.first
         else {
-            return true // no attachments -> treat as sync
+            return true
         }
-        // Keyframe unless explicitly marked "not sync".
         if let notSync = first[kCMSampleAttachmentKey_NotSync] as? Bool {
             return !notSync
         }
         return true
     }
 
-    /// Extract VPS/SPS/PPS from the format description and emit them as Annex-B.
     private func parameterSets(from format: CMFormatDescription) -> Data {
         var out = Data()
         var count = 0
-        // First call learns the parameter-set count.
         if config.codec == .hevc {
             CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
                 format, parameterSetIndex: 0, parameterSetPointerOut: nil,
@@ -212,7 +196,6 @@ final class VideoEncoder: @unchecked Sendable {
         return out
     }
 
-    /// Convert the AVCC/HVCC length-prefixed NAL units in a block buffer to Annex-B.
     private func annexB(from blockBuffer: CMBlockBuffer) -> Data {
         var totalLength = 0
         var dataPointer: UnsafeMutablePointer<Int8>?
@@ -227,7 +210,7 @@ final class VideoEncoder: @unchecked Sendable {
         var out = Data()
         let bytes = UnsafeRawPointer(base).assumingMemoryBound(to: UInt8.self)
         var offset = 0
-        // NAL length prefix from VideoToolbox is 4 bytes big-endian.
+        // Big Endian decoding
         while offset + 4 <= totalLength {
             let nalLength =
                 (Int(bytes[offset]) << 24) |

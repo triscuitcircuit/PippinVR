@@ -1,0 +1,33 @@
+{
+  "port": 9943,
+  "codec": "hevc",
+  "bitrateMbps": 40,
+  "fps": 60,
+  "durationSeconds": 0,
+
+  "displays": [
+    {
+      "name": "center",
+      "width": 2560,
+      "height": 1440,
+      "refreshHz": 60,
+      "hiDPI": true
+    },
+    {
+      "name": "left",
+      "width": 1080,
+      "height": 1920,
+      "refreshHz": 60,
+      "hiDPI": false,
+      "bitrateMbps": 20
+    },
+    {
+      "name": "right",
+      "width": 1920,
+      "height": 1080,
+      "refreshHz": 60,
+      "hiDPI": false,
+      "bitrateMbps": 20
+    }
+  ]
+}
