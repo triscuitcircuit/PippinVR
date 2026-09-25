@@ -1,4 +1,4 @@
-% Created 2026-09-23 Wed 21:56
+% Created 2026-09-25 Fri 17:52
 % Intended LaTeX compiler: pdflatex
 \documentclass[11pt]{article}
 \usepackage[utf8]{inputenc}
@@ -43,6 +43,8 @@
 \end{quote}
 \section{PippinVR}
 \label{sec:org7f16d57}
+
+\url{figures/pippin\_example.gif}
 \section{About}
 \label{sec:orgd98eb26}
 This project was created out of the frustration that all MacOS VR virtual screen software (\emph{Meta Quest Remote Desktop}, \emph{Immersed}) are proprietary pieces of software. If I have code recording my screen, I want to know what it is actually doing.
@@ -74,6 +76,7 @@ The following requirements are necessary for running \texttt{PippinVR}:
 \item \href{https://sidequestvr.com/setup-howto}{SideQuest} (V 1.21)
 \item Meta VR Headset (Quest 2, Quest 3, Quest 3s) in Developer Mode. (tested on the Meta Quest 3).
 \item \href{https://formulae.brew.sh/formula/make\#default}{Make}
+\item CMAKE ( \href{https://cmake.org/}{CMAKE.org} or by \href{https://formulae.brew.sh/formula/cmake}{Homebrew})
 \item \href{https://formulae.brew.sh/cask/android-platform-tools\#default}{Android Platform Tools}
 \item Xcode Command line tools (\texttt{xcode-select -{}-{}install})
 \item \href{https://developer.apple.com/swift/}{Swift} (V.60)
@@ -114,6 +117,10 @@ To build and install the client on the headset, the following make command calls
 \begin{verbatim}
 make install-client
 \end{verbatim}
+\begin{quote}
+{[}!NOTE]
+Make sure a \texttt{local.properties} in \texttt{pippinVR-client} file contains `sdk.dir` and points to the android sdk. An example file called \texttt{local.properties.example} is provided.
+\end{quote}
 \section{Design}
 \label{sec:orgb948b55}
 The design of \texttt{PippinVR-server} is outlined as follows:
@@ -122,11 +129,11 @@ The design of \texttt{PippinVR-server} is outlined as follows:
 \caption{Diagram representing PippinVR-server flow. \texttt{PipelineSession} handles information from the \texttt{VideoEncoder}, \texttt{ScreenCapture}, \texttt{FrameSink}, and \texttt{VirtualDisplay}.}
 \end{center}
 The server creates Virtual displays through the \texttt{CGVirtualDisplay}, sends it to the \texttt{VideoEncoder} and bundles it as an encoded frame to with a specific \texttt{StreamID} to send over the wire using the \texttt{MVRS} protocol. The frame data is encoded as big-endian, and decoded by the headset using stream identifiers.
-\begin{figure}[htbp]
-\centering
+\begin{center}
 \includegraphics[width=.9\linewidth]{figures/UML_Lifetimes.png}
 \caption{Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to \texttt{FrameSink}}
-\end{figure}
+\end{center}
+Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to \texttt{FrameSink}.
 \subsection{Known Issues}
 \label{sec:org7f6f53b}
 \begin{itemize}

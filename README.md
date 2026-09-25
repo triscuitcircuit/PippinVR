@@ -17,14 +17,14 @@
 
 ![img](figures/pippin.png "The PippinVR mascot and icon, named Pippin. It is a happy shark in awe of the screens.")
 
-![img](figures/pippin_example.gif)
-
 > “We are stuck with technology when what we really want is just stuff that works.”  - Douglas Adams
 
 
 <a id="org7f16d57"></a>
 
 # PippinVR
+
+![img](figures/pippin_example.gif)
 
 </div>
 
@@ -73,6 +73,7 @@ The following requirements are necessary for running `PippinVR`:
 -   [SideQuest](https://sidequestvr.com/setup-howto) (V 1.21)
 -   Meta VR Headset (Quest 2, Quest 3, Quest 3s) in Developer Mode. (tested on the Meta Quest 3).
 -   [Make](https://formulae.brew.sh/formula/make#default)
+-   CMAKE ( [CMAKE.org](https://cmake.org/) or by [Homebrew](https://formulae.brew.sh/formula/cmake))
 -   [Android Platform Tools](https://formulae.brew.sh/cask/android-platform-tools#default)
 -   Xcode Command line tools (`xcode-select --install`)
 -   [Swift](https://developer.apple.com/swift/) (V.60)
@@ -117,6 +118,9 @@ The client is what is run on the headset as an app, and is what displays the vir
 To build and install the client on the headset, the following make command calls upon \`gradle\` to build the android components. The client is created in C++, and relies on the `CMAKELISTS.TXT` to pull and build required packages (SOIL2 and GLM).
 
     make install-client
+
+> [!NOTE]
+> Make sure a `local.properties` in `pippinVR-client` file contains \`sdk.dir\` and points to the android sdk. An example file called `local.properties.example` is provided.
 
 
 <a id="orgb948b55"></a>

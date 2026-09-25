@@ -4,5 +4,6 @@
 /pippinVR-client/build/
 /pippinVR-client/gradle/
 /pippinVR-client/app/.cxx/
+/pippinVR-client/local.properties
 /pippinVR-Server/PippinVR.app/
 /pippinVR-Server/.build/
