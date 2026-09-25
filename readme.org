@@ -18,6 +18,9 @@
 #+end_export
 #+CAPTION: The PippinVR mascot and icon, named Pippin. It is a happy shark in awe of the screens.
 [[file:figures/pippin.png]]
+
+
+l
 #+begin_QUOTE
 “We are stuck with technology when what we really want is just stuff that works.”  - Douglas Adams
 #+end_QUOTE
@@ -95,7 +98,7 @@ The design of ~PippinVR-server~ is outlined as follows:
 The server creates Virtual displays through the ~CGVirtualDisplay~, sends it to the ~VideoEncoder~ and bundles it as an encoded frame to with a specific ~StreamID~ to send over the wire using the ~MVRS~ protocol. The frame data is encoded as big-endian, and decoded by the headset using stream identifiers.
 #+CAPTION: Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to ~FrameSink~
 [[file:figures/UML_Lifetimes.png]]
-
+Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to ~FrameSink~.
 ** Known Issues
 - More than three screens has issues of collision, causing the fourth "virtual" screen becoming the Mac screen. This is being worked on.
 - Virtual Display positions are not saved after refresh/reboot.
