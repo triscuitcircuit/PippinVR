@@ -1,4 +1,4 @@
-
+import AVFoundation
 import CoreMedia
 import Foundation
 
@@ -8,6 +8,7 @@ final class DisplayPipeline: @unchecked Sendable {
 
     private(set) var display: VirtualDisplay?
     private var capture: ScreenCapture?
+    private var cameraCapture: CameraCapture?
     private let encoderConfig: EncoderConfig
 
     private let encoderLock = NSLock()
@@ -34,6 +35,12 @@ final class DisplayPipeline: @unchecked Sendable {
     }
 
     func createDisplay(index: Int) throws {
+        // Only create virtual display for virtualDisplay source type
+        guard case .virtualDisplay = entry.source else {
+            onLog?("stream \(streamID) '\(entry.name)': camera source, no virtual display needed")
+            return
+        }
+
         let d = try VirtualDisplay(config: entry.displayConfig(index: index))
         display = d
         onLog?("stream \(streamID) '\(entry.name)': display up id=\(d.displayID) \(d.width)x\(d.height)")
@@ -52,8 +59,6 @@ final class DisplayPipeline: @unchecked Sendable {
     }
 
     func startCapture() async throws {
-        guard let display else { return }
-
         let encoder = try VideoEncoder(config: encoderConfig)
         encoder.onEncodedFrame = { [weak self] frame in
             guard let self else { return }
@@ -67,6 +72,22 @@ final class DisplayPipeline: @unchecked Sendable {
             onEncodedFrame?(frame, streamID)
         }
         self.encoder = encoder
+
+        let mbps = encoderConfig.bitrateBps / 1_000_000
+
+        switch entry.source {
+        case .virtualDisplay:
+            try await startVirtualDisplayCapture(encoder: encoder, mbps: mbps)
+
+        case let .camera(deviceID):
+            try await startCameraCapture(deviceID: deviceID, encoder: encoder, mbps: mbps)
+        }
+    }
+
+    private func startVirtualDisplayCapture(encoder: VideoEncoder, mbps: Int) async throws {
+        guard let display else {
+            throw DisplayPipelineError.noDisplayForVirtualSource
+        }
 
         let capture = ScreenCapture(
             displayID: display.displayID,
@@ -83,8 +104,30 @@ final class DisplayPipeline: @unchecked Sendable {
         try await capture.start()
         self.capture = capture
 
-        let mbps = encoderConfig.bitrateBps / 1_000_000
         onLog?("stream \(streamID) '\(entry.name)': capture + \(encoderConfig.codec) \(mbps) Mbps")
+    }
+
+    private func startCameraCapture(deviceID: String, encoder: VideoEncoder, mbps: Int) async throws {
+        guard let device = AVCaptureDevice(uniqueID: deviceID) else {
+            throw DisplayPipelineError.cameraDeviceNotFound(deviceID)
+        }
+
+        let capture = CameraCapture(
+            device: device,
+            config: CaptureConfig(width: entry.width,
+                                  height: entry.height,
+                                  fps: entry.fps ?? Int(entry.refreshHz.rounded()))
+        )
+        capture.onPixelBuffer = { [weak encoder] pixelBuffer, pts in
+            encoder?.encode(pixelBuffer: pixelBuffer, pts: pts)
+        }
+        capture.onError = { [weak self] err in
+            self?.onLog?("stream \(self?.streamID ?? 0) camera error: \(err)")
+        }
+        try await capture.start()
+        self.cameraCapture = capture
+
+        onLog?("stream \(streamID) '\(entry.name)': camera '\(device.localizedName)' + \(encoderConfig.codec) \(mbps) Mbps")
     }
 
     func requestKeyframe() {
@@ -93,9 +136,11 @@ final class DisplayPipeline: @unchecked Sendable {
 
     func shutdown() async {
         await capture?.stop()
+        await cameraCapture?.stop()
         encoder?.flush()
         encoder?.dispose()
         capture = nil
+        cameraCapture = nil
         encoder = nil
         display?.dispose()
         display = nil
@@ -105,5 +150,19 @@ final class DisplayPipeline: @unchecked Sendable {
         statsLock.lock()
         defer { statsLock.unlock() }
         return (_frames, _bytes, _keyframes)
+    }
+}
+
+enum DisplayPipelineError: Error, CustomStringConvertible {
+    case noDisplayForVirtualSource
+    case cameraDeviceNotFound(String)
+
+    var description: String {
+        switch self {
+        case .noDisplayForVirtualSource:
+            "Cannot start capture for virtual display source: no display was created"
+        case let .cameraDeviceNotFound(id):
+            "Camera device not found: \(id)"
+        }
     }
 }

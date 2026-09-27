@@ -1,5 +1,41 @@
 import AppKit
+import AVFoundation
 import Foundation
+import IOSDeviceCore
+import LoggingCore
+
+IOSDeviceCore.enableScreenCaptureDevices()
+
+func requestCameraAccessEarly() {
+    Logger.info("Checking camera access permissions")
+    
+    let status = AVCaptureDevice.authorizationStatus(for: .video)
+    
+    switch status {
+    case .authorized:
+        Logger.info("Camera access already authorized")
+    case .notDetermined:
+        Logger.info("Requesting camera access permission")
+        let semaphore = DispatchSemaphore(value: 0)
+        AVCaptureDevice.requestAccess(for: .video) { granted in
+            if granted {
+                Logger.info("Camera access granted")
+            } else {
+                Logger.warning("Camera access denied by user")
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+    case .denied:
+        Logger.warning("Camera access denied - enable in System Settings → Privacy & Security → Camera")
+    case .restricted:
+        Logger.warning("Camera access restricted by system policy")
+    @unknown default:
+        Logger.warning("Unknown camera authorization status")
+    }
+}
+
+requestCameraAccessEarly()
 
 let usage = """
 pippinvr-server
@@ -62,7 +98,6 @@ func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool, dockIcon: 
         config.durationSeconds = dur
     }
 
-    // --- display-level shorthands (apply to every configured display) ---
     if let w = value("--width"), let width = Int(w) {
         for i in config.displays.indices {
             config.displays[i].width = width

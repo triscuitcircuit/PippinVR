@@ -46,6 +46,15 @@ Menubar and taskbar icons are used so that you can easily shutoff the applicatio
 A settings menu can be used the configure the screens, with a default configuration file being placed in ~ApplicationSupport~ upon installation.
 
 Dynamic framerate of each virtual screen conserves bandwidth using the wire.
+
+~PippinVR~ also supports streaming of iOS or iPadOS screens as a virtual screen using USB.
+#+begin_export md
+<div align="center">
+#+end_export
+[[file:figures/Pippin_Tablet_Streaming.JPG]]
+#+begin_export md
+</div>
+#+end_export
 * Installation
 This respsitory contains both the ~PippinVR-Server~, the server running on MacOS, and ~PippinVR-Client~, a client running on a Meta headset.
 Because this code was created with wire transmission in mind, it makes use of Android Debug Bridge (adb) and SideQuest.

@@ -9,11 +9,9 @@
 namespace pippinvr {
 namespace {
 
-/// Panels sit on an arc this far from the user, spanning this much horizontal angle
-/// each. Roughly a comfortable multi-monitor desk setup.
 constexpr float kPanelDistanceMeters = 2.0f;
 constexpr float kPanelWidthMeters = 1.6f;
-constexpr float kPanelGapRadians = 0.62f;  // ~35 degrees between panel centres
+constexpr float kPanelGapRadians = 0.62f;
 
 constexpr int64_t kFormatSRGBA8 = 0x8C43;  // GL_SRGB8_ALPHA8
 constexpr int64_t kFormatRGBA8 = 0x8058;   // GL_RGBA8
@@ -25,7 +23,6 @@ constexpr int32_t kBarTexHeight = 64;
 constexpr float kBarHeightMeters = 0.075f;
 constexpr float kBarGapMeters = 0.02f;
 
-/// Yaw applied per frame while a rotate handle is held, and per unit of thumbstick.
 constexpr float kRotateHandleRadiansPerFrame = 0.018f;
 constexpr float kRotateStickRadiansPerFrame = 0.025f;
 
@@ -150,6 +147,14 @@ bool XrApp::createInstance(android_app* app) {
     XrInstanceProperties props{XR_TYPE_INSTANCE_PROPERTIES};
     if (XR_SUCCEEDED(xrGetInstanceProperties(instance_, &props))) {
         LOGI("OpenXR runtime: %s", props.runtimeName);
+    }
+
+    XrSystemProperties systemProps{XR_TYPE_SYSTEM_PROPERTIES};
+    if (XR_SUCCEEDED(xrGetSystemProperties(instance_, systemId_, &systemProps))) {
+        LOGI("System: %s", systemProps.systemName);
+        LOGI("  Max layers: %u", systemProps.graphicsProperties.maxLayerCount);
+        LOGI("  Max swapchain: %ux%u", systemProps.graphicsProperties.maxSwapchainImageWidth,
+             systemProps.graphicsProperties.maxSwapchainImageHeight);
     }
 
     if (!input_.init(instance_)) {
@@ -700,6 +705,13 @@ bool XrApp::buildPanels() {
 
     const int64_t format = chooseSwapchainFormat();
 
+    LOGI("Setting up %zu streams from server", streams.size());
+    for (size_t i = 0; i < streams.size(); ++i) {
+        const StreamInfo& info = streams[i];
+        LOGI("  [%zu] stream %u '%s' %ux%u %s", i, info.id, info.name.c_str(), info.width,
+             info.height, info.mimeType());
+    }
+
     std::vector<std::unique_ptr<StreamDecoder>> built;
     for (const StreamInfo& info : streams) {
         auto decoder = std::make_unique<StreamDecoder>();
@@ -724,6 +736,7 @@ bool XrApp::buildPanels() {
 
         built.push_back(std::move(decoder));
         panels_.push_back(std::move(panel));
+        LOGI("stream %u: panel created successfully", info.id);
     }
 
     {
@@ -758,7 +771,6 @@ void XrApp::renderPanel(Panel& panel) {
     if (buffer != nullptr) {
         renderer_.blit(buffer, texture, panel.width, panel.height);
     } else {
-        // Nothing decoded yet: a dim grey panel reads as "connected, waiting".
         renderer_.clear(texture, panel.width, panel.height, 0.05f, 0.05f, 0.07f);
     }
 
@@ -779,7 +791,6 @@ void XrApp::renderFrame() {
     if (XR_FAILED(xrBeginFrame(session_, &beginInfo)))
         return;
 
-    // Panels are (re)built on the render thread so all GL/XR calls stay on one thread.
     buildPanels();
 
     input_.update(session_, frameState_.predictedDisplayTime);
@@ -836,9 +847,12 @@ void XrApp::renderFrame() {
     xrEndFrame(session_, &endInfo);
 
     if ((++frameIndex_ % 300) == 0) {
+        LOGI("Frame %llu: %zu panels, %zu layers submitted",
+             static_cast<unsigned long long>(frameIndex_), panels_.size(),
+             static_cast<size_t>(endInfo.layerCount));
         std::lock_guard<std::mutex> lock(decodersMutex_);
         for (const auto& decoder : decoders_) {
-            LOGI("stream %u: decoded=%llu dropped=%llu", decoder->info().id,
+            LOGI("  stream %u: decoded=%llu dropped=%llu", decoder->info().id,
                  static_cast<unsigned long long>(decoder->framesDecoded()),
                  static_cast<unsigned long long>(decoder->framesDropped()));
         }

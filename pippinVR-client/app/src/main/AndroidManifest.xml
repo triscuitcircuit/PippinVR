@@ -12,6 +12,7 @@
     <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />
 
     <application
+        android:icon="@mipmap/"
         android:label="PippinVr"
         android:allowBackup="false"
         android:hasCode="false"
@@ -20,9 +21,13 @@
         <meta-data android:name="com.oculus.supported_devices"
             android:value="quest2|questpro|quest3" />
 
+        <meta-data android:name="com.oculus.ossplash.background"
+                   android:resource="@drawable/vr_splash" />
+
         <activity
             android:name="android.app.NativeActivity"
             android:label="PippinVr"
+            android:icon="@mipmap/ic_launcher"
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="landscape"

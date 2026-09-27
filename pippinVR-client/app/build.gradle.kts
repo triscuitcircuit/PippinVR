@@ -56,6 +56,7 @@ android {
     sourceSets {
         getByName("main") {
             java.setSrcDirs(emptyList<String>())
+            res.srcDirs("src/main/res")
         }
     }
 
