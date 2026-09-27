@@ -33,7 +33,7 @@ repos:
         types_or: [c++, c]
         files: \.(cpp|cc|cxx|c|h|hpp|hxx)$
         args: ["-i", "--style=file:pippinVR-client/.clang-format"]
-        exclude: "^pippinVR-client/app/src/main/cpp/(android_native_app_glue|openxr)/"
+        exclude: '^pippinVR-client/app/src/main/cpp/(android_native_app_glue|openxr)/|^pippinVR-Server/Sources/'
 
 
   - repo: https://github.com/shellcheck-py/shellcheck-py

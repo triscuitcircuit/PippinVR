@@ -7,8 +7,20 @@ let package = Package(
         .macOS(.v14)
     ],
     targets: [
+        .target(
+            name: "LoggingCore",
+            path: "Sources/LoggingCore",
+            publicHeadersPath: "."
+        ),
+        .target(
+            name: "IOSDeviceCore",
+            dependencies: ["LoggingCore"],
+            path: "Sources/IOSDeviceCore",
+            publicHeadersPath: "."
+        ),
         .executableTarget(
             name: "pippinvr-server",
+            dependencies: ["LoggingCore", "IOSDeviceCore"],
             path: "Sources/pippinvr-server"
         )
     ]

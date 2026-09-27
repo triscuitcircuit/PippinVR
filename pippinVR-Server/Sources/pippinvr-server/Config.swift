@@ -35,18 +35,66 @@ struct DisplayEntry: Codable {
     var refreshHz: Double = 60.0
     var hiDPI: Bool = true
 
+    var source: SourceType = .virtualDisplay
+
     var codec: CodecType?
     var bitrateMbps: Int?
     var fps: Int?
 
+    enum SourceType: Codable, Equatable {
+        case virtualDisplay
+        case camera(deviceID: String)
+
+        enum CodingKeys: String, CodingKey {
+            case type, deviceID
+        }
+
+        init(from decoder: Decoder) throws {
+            if let container = try? decoder.container(keyedBy: CodingKeys.self),
+               let type = try? container.decode(String.self, forKey: .type) {
+                switch type {
+                case "virtualDisplay":
+                    self = .virtualDisplay
+                case "camera":
+                    let deviceID = try container.decode(String.self, forKey: .deviceID)
+                    self = .camera(deviceID: deviceID)
+                default:
+                    self = .virtualDisplay
+                }
+            } else if let singleValue = try? decoder.singleValueContainer(),
+                      let string = try? singleValue.decode(String.self) {
+                // Handle simple string format for backwards compatibility
+                if string == "virtualDisplay" {
+                    self = .virtualDisplay
+                } else {
+                    self = .virtualDisplay
+                }
+            } else {
+                self = .virtualDisplay
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .virtualDisplay:
+                try container.encode("virtualDisplay", forKey: .type)
+            case let .camera(deviceID):
+                try container.encode("camera", forKey: .type)
+                try container.encode(deviceID, forKey: .deviceID)
+            }
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
-        case name, width, height, refreshHz, hiDPI, codec, bitrateMbps, fps
+        case name, width, height, refreshHz, hiDPI, source, codec, bitrateMbps, fps
     }
 
     init(name: String = "pippinvr-display", width: Int = 2560, height: Int = 1440,
-         refreshHz: Double = 60.0, hiDPI: Bool = true) {
+         refreshHz: Double = 60.0, hiDPI: Bool = true, source: SourceType = .virtualDisplay) {
         self.name = name; self.width = width; self.height = height
         self.refreshHz = refreshHz; self.hiDPI = hiDPI
+        self.source = source
     }
 
     init(from decoder: Decoder) throws {
@@ -66,6 +114,9 @@ struct DisplayEntry: Codable {
         }
         if let v = try c.decodeIfPresent(Bool.self, forKey: .hiDPI) {
             hiDPI = v
+        }
+        if let v = try c.decodeIfPresent(SourceType.self, forKey: .source) {
+            source = v
         }
         codec = try c.decodeIfPresent(CodecType.self, forKey: .codec)
         bitrateMbps = try c.decodeIfPresent(Int.self, forKey: .bitrateMbps)
@@ -228,6 +279,19 @@ struct ServerConfig: Codable {
             throw ConfigError.tooManyDisplays(displays.count)
         }
         for d in displays {
+            // CRITICAL: For camera sources, dimensions are determined when capture starts
+            // iOS devices especially report 0x0 until the device is opened
+            // Skip validation for camera sources
+            if case .camera = d.source {
+                // Camera sources: validate refresh rate only
+                guard d.refreshHz > 0, d.refreshHz <= 240 else {
+                    throw ConfigError.badRefresh(d.name, d.refreshHz)
+                }
+                // Dimensions and alignment will be handled by the capture session
+                continue
+            }
+            
+            // Virtual display sources: full validation
             guard d.width > 0, d.height > 0,
                   d.width <= 16384, d.height <= 16384
             else {

@@ -1,17 +1,17 @@
 
 # Table of Contents
 
-1.  [PippinVR](#org7f16d57)
-2.  [About](#orgd98eb26)
-    1.  [Capabilities](#org99c01cb)
-3.  [Installation](#org9639605)
-    1.  [Requirements](#org0ce0959)
-        1.  [Pippin-VR Server](#org7925b9e)
-        2.  [Pippin-VR Client](#orgee35afe)
-4.  [Design](#orgb948b55)
-    1.  [Known Issues](#org7f6f53b)
-5.  [Contributing](#org9beed48)
-6.  [License](#org2dc1f56)
+1.  [PippinVR](#orgfa898cb)
+2.  [About](#org0c8fbd7)
+    1.  [Capabilities](#org0043671)
+3.  [Installation](#org72a3840)
+    1.  [Requirements](#orgf42ba8d)
+        1.  [Pippin-VR Server](#orgf718da5)
+        2.  [Pippin-VR Client](#org8a1512e)
+4.  [Design](#orgaf542ca)
+    1.  [Known Issues](#org5c0e423)
+5.  [Contributing](#org819e6b8)
+6.  [License](#org496e461)
 
 <div align="center">
 
@@ -20,7 +20,7 @@
 > “We are stuck with technology when what we really want is just stuff that works.”  - Douglas Adams
 
 
-<a id="org7f16d57"></a>
+<a id="orgfa898cb"></a>
 
 # PippinVR
 
@@ -29,7 +29,7 @@
 </div>
 
 
-<a id="orgd98eb26"></a>
+<a id="org0c8fbd7"></a>
 
 # About
 
@@ -42,20 +42,28 @@ This code is under the GNUv3 license as I feel strongly that any derivatives of 
 > "Given enough eyeballs, all bugs are shallow" - Eric S. Raymond (The Cathedral and the Bazaar)
 
 
-<a id="org99c01cb"></a>
+<a id="org0043671"></a>
 
 ## Capabilities
 
-So far `PippinVR` can cast multiple screens from a Mac into a virtual space. It also has the ability to overlay the screens in passthrough, or cycle through settings with "B" (top button on a Meta Quest controller). The screens can be moved with the controller and placed individually. 
+So far `PippinVR` can cast multiple screens from a Mac into a virtual space. It also has the ability to overlay the screens in passthrough, or cycle through settings with "B" (top button on a Meta Quest controller). The screens can be moved with the controller and placed individually.
 
 Menubar and taskbar icons are used so that you can easily shutoff the application when MacOS is stuck in virtual screen mode.
 
 A settings menu can be used the configure the screens, with a default configuration file being placed in `ApplicationSupport` upon installation.
 
-Dynamic framerate of each virtual screen conserves bandwidth using the wire. 
+Dynamic framerate of each virtual screen conserves bandwidth using the wire.
+
+`PippinVR` also supports streaming of iOS or iPadOS screens as a virtual screen using USB.
+
+<div align="center">
+
+![img](figures/Pippin_Tablet_Streaming.JPG)
+
+</div>
 
 
-<a id="org9639605"></a>
+<a id="org72a3840"></a>
 
 # Installation
 
@@ -63,7 +71,7 @@ This respsitory contains both the `PippinVR-Server`, the server running on MacOS
 Because this code was created with wire transmission in mind, it makes use of Android Debug Bridge (adb) and SideQuest.
 
 
-<a id="org0ce0959"></a>
+<a id="orgf42ba8d"></a>
 
 ## Requirements
 
@@ -81,11 +89,11 @@ The following requirements are necessary for running `PippinVR`:
 -   MacOS (tested on MacOS 26.6)
 
 
-<a id="org7925b9e"></a>
+<a id="orgf718da5"></a>
 
 ### Pippin-VR Server
 
-This section is for the server aspect 
+This section is for the server aspect
 Make sure that `adb` is listening on the specifically bounded port for Pippin.
 
     adb reverse tcp:9943 tcp:9943
@@ -95,21 +103,21 @@ in the root directory of `PippinVR`, run the following command:
     make install-server-app
 
 > [!NOTE]
-> This installs `PippinVR.app` in the `/Applications` folders automatically. 
+> This installs `PippinVR.app` in the `/Applications` folders automatically.
 
 It should compile and install the server application as a \`.app\`. The first run will start the virtual screens and then quit out automatically. This is normal, as Pippin needs permission to record.
 
-`PippinVR` works by recording whats called "Virtual" (non-physical) screens and then sending them to the headset to display. Because it is recording screens, MacOS requires permissions for screen recording. 
+`PippinVR` works by recording whats called "Virtual" (non-physical) screens and then sending them to the headset to display. Because it is recording screens, MacOS requires permissions for screen recording.
 
 > [!NOTE]
 > To configure Screen recording for PippinVR, the following needs to be configured:
 >    `System Settings -> Privacy & Security -> Screen Recording`
 > This setting needs to be changed  each time the app is recompiled.
 
-Pippin-VR server has a settings menu that can be accessed from the menu bar. The settings menu allows changing the screen configurations while displaying to the headset. Displays can be added or removed, with instant refresh once the settings have been applied. 
+Pippin-VR server has a settings menu that can be accessed from the menu bar. The settings menu allows changing the screen configurations while displaying to the headset. Displays can be added or removed, with instant refresh once the settings have been applied.
 
 
-<a id="orgee35afe"></a>
+<a id="org8a1512e"></a>
 
 ### Pippin-VR Client
 
@@ -123,7 +131,7 @@ To build and install the client on the headset, the following make command calls
 > Make sure a `local.properties` in `pippinVR-client` file contains \`sdk.dir\` and points to the android sdk. An example file called `local.properties.example` is provided.
 
 
-<a id="orgb948b55"></a>
+<a id="orgaf542ca"></a>
 
 # Design
 
@@ -136,7 +144,7 @@ The server creates Virtual displays through the `CGVirtualDisplay`, sends it to 
 Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to `FrameSink`.
 
 
-<a id="org7f6f53b"></a>
+<a id="org5c0e423"></a>
 
 ## Known Issues
 
@@ -146,7 +154,7 @@ Actor diagram for lifetimes of the client. Showcases the loop of frame encoding 
 -   Stale displays with old content will stay in the headset when the `PippinVR` app is disconnected.
 
 
-<a id="org9beed48"></a>
+<a id="org819e6b8"></a>
 
 # Contributing
 
@@ -157,7 +165,7 @@ Contributions are welcome and encouraged (as per the GNUv3 License). To contribu
 This project will take contributions in the form of pull-requests.
 
 
-<a id="org2dc1f56"></a>
+<a id="org496e461"></a>
 
 # License
 

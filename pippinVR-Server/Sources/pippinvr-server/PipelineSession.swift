@@ -79,7 +79,7 @@ final class PipelineSession: @unchecked Sendable {
         stateLock.lock()
         _stopRequested = true
         stateLock.unlock()
-        log("stop requested")
+        Logger.error("stop requested")
     }
 
     private var stopRequested: Bool {
@@ -120,7 +120,9 @@ final class PipelineSession: @unchecked Sendable {
             let pipeline = DisplayPipeline(streamID: UInt8(index),
                                            entry: entry,
                                            encoderConfig: options.config.encoderConfig(for: entry))
-            pipeline.onLog = { [weak self] message in self?.log(message) }
+            pipeline.onLog = { message in
+                Logger.debug(message)
+            }
             try pipeline.createDisplay(index: index)
             built.append(pipeline)
         }
@@ -144,9 +146,9 @@ final class PipelineSession: @unchecked Sendable {
 
         if let path = options.configPath {
             try? options.config.save(to: path)
-            log("reconfigured with \(displays.count) display(s), saved to \(path)")
+            Logger.info("reconfigured with \(displays.count) display(s), saved to \(path)")
         } else {
-            log("reconfigured with \(displays.count) display(s)")
+            Logger.info("reconfigured with \(displays.count) display(s)")
         }
     }
 
@@ -167,6 +169,60 @@ final class PipelineSession: @unchecked Sendable {
     func resetToDefault() async throws {
         let defaultConfig = ServerConfig.defaultConfig()
         try await reconfigure(displays: defaultConfig.displays)
+    }
+
+    func isDeviceConnected(_ deviceID: String) -> Bool {
+        options.config.displays.contains { display in
+            if case let .camera(id) = display.source {
+                return id == deviceID
+            }
+            return false
+        }
+    }
+
+    func connectCameraDevice(device: CaptureDevice, width: Int, height: Int, fps: Int = 30) async throws {
+        guard isStreaming else {
+            throw ReconfigurationError.notStreaming
+        }
+
+        guard !isDeviceConnected(device.id) else {
+            Logger.warning("camera '\(device.name)' is already connected")
+            return
+        }
+
+        var newDisplays = options.config.displays
+        newDisplays.append(DisplayEntry(
+            name: device.name,
+            width: width,
+            height: height,
+            refreshHz: Double(fps),
+            hiDPI: false,
+            source: .camera(deviceID: device.id)
+        ))
+
+        try await reconfigure(displays: newDisplays)
+        Logger.info("connected camera '\(device.name)' as new display")
+    }
+
+    func disconnectCameraDevice(_ deviceID: String) async throws {
+        guard isStreaming else {
+            throw ReconfigurationError.notStreaming
+        }
+
+        let newDisplays = options.config.displays.filter { display in
+            if case let .camera(id) = display.source {
+                return id != deviceID
+            }
+            return true
+        }
+
+        guard newDisplays.count < options.config.displays.count else {
+            Logger.error("camera device '\(deviceID)' not found")
+            return
+        }
+
+        try await reconfigure(displays: newDisplays)
+        Logger.warning("disconnected camera device '\(deviceID)'")
     }
 
     // MARK: Runtime
@@ -190,11 +246,11 @@ final class PipelineSession: @unchecked Sendable {
         switch options.sink {
         case let .file(path):
             sink = FileFrameSink(path: path)
-            log("sink: file \(path)")
+            Logger.info("sink: file \(path)")
         case let .tcp(port):
             sink = try TCPFrameSink(port: port)
             sinkNeedsClient = true
-            log("sink: tcp :\(port) (protocol v\(WireFormat.version), \(descriptors.count) stream(s))")
+            Logger.info("sink: tcp :\(port) (protocol v\(WireFormat.version), \(descriptors.count) stream(s))")
         }
 
         sink.onClientConnected = { [weak self] in
@@ -225,7 +281,7 @@ final class PipelineSession: @unchecked Sendable {
         let waitMode = sinkNeedsClient && options.waitForClient
         if !waitMode {
             if sinkNeedsClient {
-                log("WARNING: --eager-displays : virtual displays are being created " +
+                Logger.warning("--eager-displays : virtual displays are being created " +
                     "before any client has connected. If nothing attaches, windows may " +
                     "migrate onto screens you cannot see. Stop with the menu bar")
             }
@@ -243,7 +299,7 @@ final class PipelineSession: @unchecked Sendable {
         let oneShot = options.config.durationSeconds > 0
 
         while !stopRequested {
-            log("waiting for a client to connect " +
+            Logger.info("waiting for a client to connect " +
                 (timeout > 0 ? " (giving up after \(Int(timeout))s)" : ""))
 
             let waitStarted = Date()
@@ -252,7 +308,7 @@ final class PipelineSession: @unchecked Sendable {
                     return
                 }
                 if timeout > 0, Date().timeIntervalSince(waitStarted) >= timeout {
-                    log("no client connected within \(Int(timeout))s; exiting without " +
+                    Logger.info("no client connected within \(Int(timeout))s; exiting without " +
                         "creating any virtual displays")
                     return
                 }
@@ -276,7 +332,7 @@ final class PipelineSession: @unchecked Sendable {
 
         let duration = options.config.durationSeconds
         let forever = duration <= 0
-        log("streaming \(forever ? "until the client disconnects" : "\(Int(duration))s")" +
+        Logger.info("streaming \(forever ? "until the client disconnects" : "\(Int(duration))s")" +
             "; \(pipelines.count) display(s)")
 
         while !stopRequested {
@@ -308,7 +364,9 @@ final class PipelineSession: @unchecked Sendable {
             let pipeline = DisplayPipeline(streamID: UInt8(index),
                                            entry: entry,
                                            encoderConfig: config.encoderConfig(for: entry))
-            pipeline.onLog = { [weak self] message in self?.log(message) }
+            pipeline.onLog = { message in
+                Logger.debug(message)
+            }
             try pipeline.createDisplay(index: index)
             built.append(pipeline)
         }
@@ -337,7 +395,7 @@ final class PipelineSession: @unchecked Sendable {
         }
 
         setPipelines([], streaming: false)
-        log("virtual displays torn down")
+        Logger.info("virtual displays torn down")
     }
 
     private func pipelinesSnapshot() -> [DisplayPipeline] {
@@ -361,9 +419,9 @@ final class PipelineSession: @unchecked Sendable {
         sink?.stop()
         sink = nil
         if totals.f > 0 {
-            log("totals: frames=\(totals.f) keyframes=\(totals.k) bytes=\(totals.b)")
+            Logger.info("totals: frames=\(totals.f) keyframes=\(totals.k) bytes=\(totals.b)")
         }
-        log("shutdown complete")
+        Logger.warning("shutdown complete")
     }
 
     // MARK: ADB connection
@@ -375,7 +433,7 @@ final class PipelineSession: @unchecked Sendable {
             "/usr/local/bin/adb"
         ]
         guard let adb = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            log("adb not found; skipping `adb reverse` (looked in Android SDK and Homebrew)")
+            Logger.error("adb not found; skipping `adb reverse` (looked in Android SDK and Homebrew)")
             return
         }
 
@@ -388,11 +446,11 @@ final class PipelineSession: @unchecked Sendable {
             try process.run()
             process.waitUntilExit()
             if process.terminationStatus == 0 {
-                log("adb reverse tcp:\(port) armed")
+                Logger.info("adb reverse tcp:\(port) armed")
             } else {
                 let errorMsg =
                     "adb reverse failed (status \(process.terminationStatus)): Check if headset is plugged in and authorized for Homebrew"
-                log(errorMsg)
+                Logger.error(errorMsg)
 
                 DispatchQueue.main.async {
                     showModalError(title: "ADB Command Failed", message: errorMsg)
@@ -400,7 +458,7 @@ final class PipelineSession: @unchecked Sendable {
             }
         } catch {
             let errorMsg = "could not run adb command: \(error)"
-            log(errorMsg)
+            Logger.error(errorMsg)
             DispatchQueue.main.async {
                 showModalError(title: "ADB Command Failed", message: errorMsg)
             }
@@ -419,10 +477,6 @@ final class PipelineSession: @unchecked Sendable {
                           Double(stats.frames) / elapsed,
                           Double(stats.bytes) * 8 / elapsed / 1_000_000)
         }
-        log("stats: " + parts.joined(separator: " | "))
-    }
-
-    private func log(_ message: String) {
-        FileHandle.standardError.write(Data("[pipeline] \(message)\n".utf8))
+        Logger.info("stats: " + parts.joined(separator: " | "))
     }
 }

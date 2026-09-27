@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var editedDisplays: [DisplayEntry] = []
     @State private var showError: String?
     @State private var isApplying = false
+    @StateObject private var deviceManager = CaptureDeviceManager()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -174,10 +175,51 @@ struct SettingsView: View {
                     .padding(.top, 4)
             }
 
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Capture Devices")
+                        .font(.headline)
+                    Spacer()
+                    Button {
+                        deviceManager.discoverDevices()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .help("Refresh device list")
+                }
+
+                if !session.isStreaming {
+                    Text("Connect to headset to add camera devices.")
+                        .foregroundColor(.secondary)
+                        .padding(12)
+                } else if deviceManager.availableDevices.isEmpty {
+                    Text("No cameras or iPads detected. Connect a device and click refresh.")
+                        .foregroundColor(.secondary)
+                        .padding(12)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            ForEach(deviceManager.availableDevices) { device in
+                                CaptureDeviceRow(
+                                    device: device,
+                                    isConnected: session.isDeviceConnected(device.id)
+                                ) {
+                                    connectDevice(device)
+                                } onDisconnect: {
+                                    disconnectDevice(device)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer()
         }
         .padding()
-        .frame(minWidth: 550, minHeight: 500)
+        .frame(minWidth: 550, minHeight: 600)
     }
 
     private func applyChanges() {
@@ -196,6 +238,36 @@ struct SettingsView: View {
                 await MainActor.run {
                     showError = error.localizedDescription
                     isApplying = false
+                }
+            }
+        }
+    }
+
+    private func connectDevice(_ device: CaptureDevice) {
+        showError = nil
+
+        Task {
+            do {
+                let (width, height) = deviceManager.defaultResolution(for: device)
+                let fps = device.supportedResolutions.first?.maxFps ?? 30.0
+                try await session.connectCameraDevice(device: device, width: width, height: height, fps: Int(fps))
+            } catch {
+                await MainActor.run {
+                    showError = "Failed to connect \(device.name): \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func disconnectDevice(_ device: CaptureDevice) {
+        showError = nil
+
+        Task {
+            do {
+                try await session.disconnectCameraDevice(device.id)
+            } catch {
+                await MainActor.run {
+                    showError = "Failed to disconnect \(device.name): \(error.localizedDescription)"
                 }
             }
         }
@@ -250,5 +322,85 @@ struct DisplayEditorRow: View {
         .padding(12)
         .background(Color.gray.opacity(0.1))
         .cornerRadius(8)
+    }
+}
+
+struct CaptureDeviceRow: View {
+    let device: CaptureDevice
+    let isConnected: Bool
+    let onConnect: () -> Void
+    let onDisconnect: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: deviceIcon)
+                .font(.title2)
+                .foregroundColor(deviceColor)
+                .frame(width: 32)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(device.name)
+                    .font(.body)
+
+                HStack(spacing: 8) {
+                    Text(device.type.label)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    if let resolution = device.supportedResolutions.first {
+                        Text("•")
+                            .foregroundColor(.secondary)
+                        Text("\(resolution.width)×\(resolution.height) @ \(Int(resolution.maxFps))fps")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
+            Spacer()
+
+            if isConnected {
+                Text("Connected")
+                    .font(.caption)
+                    .foregroundColor(.green)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(4)
+
+                Button("Disconnect") {
+                    onDisconnect()
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Button("Connect") {
+                    onConnect()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(12)
+        .background(isConnected ? Color.green.opacity(0.05) : Color.gray.opacity(0.05))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isConnected ? Color.green.opacity(0.3) : Color.clear, lineWidth: 1)
+        )
+    }
+
+    private var deviceIcon: String {
+        if isConnected {
+            switch device.type {
+            case .builtInCamera: return "camera.fill"
+            case .ipad: return "ipad.badge.play"
+            case .externalCamera: return "camera.metering.unknown"
+            }
+        } else {
+            return device.type.icon
+        }
+    }
+
+    private var deviceColor: Color {
+        isConnected ? .green : .accentColor
     }
 }
