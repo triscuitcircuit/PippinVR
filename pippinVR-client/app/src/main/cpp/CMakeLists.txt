@@ -20,6 +20,17 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(glm)
 
 FetchContent_Declare(
+    yaml-cpp
+    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG 0.8.0
+    GIT_SHALLOW TRUE
+)
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(yaml-cpp)
+
+FetchContent_Declare(
     soil2
     GIT_REPOSITORY https://github.com/SpartanJ/SOIL2.git
     GIT_TAG 1.31
@@ -50,6 +61,7 @@ add_library(pippinvr_client SHARED
     Input.cpp
     Net.cpp
     Decoder.cpp
+    PanelConfig.cpp
 )
 
 target_compile_definitions(pippinvr_client PRIVATE
@@ -63,6 +75,7 @@ target_link_libraries(pippinvr_client
     native_app_glue
     OpenXR::openxr_loader
     glm::glm
+    yaml-cpp::yaml-cpp
     soil2
     android
     nativewindow

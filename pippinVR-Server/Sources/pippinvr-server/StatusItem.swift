@@ -34,9 +34,7 @@ final class StatusItemController {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.rebuildMenu() }
         }
-
-        let note = "[pipeline] menu bar item active \n"
-        FileHandle.standardError.write(Data(note.utf8))
+        Logger.info("menu bar item active")
     }
 
     func remove() {
@@ -78,6 +76,21 @@ final class StatusItemController {
             let item = menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
             item.target = self
         }
+
+        menu.addItem(.separator())
+        
+        let configPath = session.configPath ?? "~/.pippinvr/config.json (default)"
+        let configPathItem = NSMenuItem(title: "Config: \(configPath)", action: nil, keyEquivalent: "")
+        configPathItem.isEnabled = false
+        menu.addItem(configPathItem)
+        
+        let chooseConfigItem = NSMenuItem(title: "Choose Config File...", action: #selector(chooseConfigFile), keyEquivalent: "")
+        chooseConfigItem.target = self
+        menu.addItem(chooseConfigItem)
+        
+        let reloadConfigItem = NSMenuItem(title: "Reload Config", action: #selector(reloadConfig), keyEquivalent: "r")
+        reloadConfigItem.target = self
+        menu.addItem(reloadConfigItem)
 
         menu.addItem(.separator())
 
@@ -141,6 +154,60 @@ final class StatusItemController {
             } catch {
                 let alert = NSAlert()
                 alert.messageText = "Reset Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
+    }
+
+    @objc private func chooseConfigFile() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Config File"
+        panel.message = "Select a PippinVR config file"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.json]
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            Task { @MainActor in
+                do {
+                    try await session.loadConfig(path: url.path)
+                    
+                    let alert = NSAlert()
+                    alert.messageText = "Config Loaded"
+                    alert.informativeText = "Configuration loaded from: \(url.path)"
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                } catch {
+                    let alert = NSAlert()
+                    alert.messageText = "Failed to Load Config"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        }
+    }
+    
+    @objc private func reloadConfig() {
+        Task { @MainActor in
+            do {
+                try await session.reloadConfig()
+                
+                let alert = NSAlert()
+                alert.messageText = "Config Reloaded"
+                alert.informativeText = "Configuration Loaded"
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Failed to Reload Config"
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")

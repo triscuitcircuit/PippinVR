@@ -41,11 +41,15 @@ This code is under the GNUv3 license as I feel strongly that any derivatives of 
 ** Capabilities
 So far ~PippinVR~ can cast multiple screens from a Mac into a virtual space. It also has the ability to overlay the screens in passthrough, or cycle through settings with "B" (top button on a Meta Quest controller). The screens can be moved with the controller and placed individually.
 
+Zooming in and out of the virtual screen space using forward in back with the controller sticks  is supported.
+
 Menubar and taskbar icons are used so that you can easily shutoff the application when MacOS is stuck in virtual screen mode.
 
 A settings menu can be used the configure the screens, with a default configuration file being placed in ~ApplicationSupport~ upon installation.
 
 Dynamic framerate of each virtual screen conserves bandwidth using the wire.
+
+~PippinVR~ supports as many displays as your system can handle. They can be configured and added by the settings menu. The only limit is finding your mouse in the screens.
 
 ~PippinVR~ also supports streaming of iOS or iPadOS screens as a virtual screen using USB.
 #+begin_export md
@@ -98,7 +102,7 @@ Pippin-VR server has a settings menu that can be accessed from the menu bar. The
 *** Pippin-VR Client
 The client is what is run on the headset as an app, and is what displays the virtual screens in the headset.
 
-To build and install the client on the headset, the following make command calls upon `gradle` to build the android components. The client is created in C++, and relies on the ~CMAKELISTS.TXT~ to pull and build required packages (SOIL2 and GLM).
+To build and install the client on the headset, the following make command calls upon `gradle` to build the android components. The client is created in C++, and relies on the ~CMAKELISTS.TXT~ to pull and build required packages (SOIL2 , GLM, YAMLCPP).
 #+begin_src sh
   make install-client
 #+end_src

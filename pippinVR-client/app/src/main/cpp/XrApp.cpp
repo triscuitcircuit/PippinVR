@@ -12,6 +12,26 @@ namespace {
 constexpr float kPanelDistanceMeters = 2.0f;
 constexpr float kPanelWidthMeters = 1.6f;
 constexpr float kPanelGapRadians = 0.62f;
+constexpr float kMinZoom = 0.5f;
+constexpr float kMaxZoom = 2.5f;
+constexpr float kZoomStep = 0.1f;
+
+std::string getConfigFilePath(android_app* app) {
+    return std::string(app->activity->internalDataPath) + "/panel_layout.yaml";
+}
+
+PanelLayout buildLayoutFromPanels(const std::vector<Panel>& panels, float zoom) {
+    PanelLayout layout;
+    layout.zoom = zoom;
+    for (size_t i = 0; i < panels.size(); ++i) {
+        PanelState state;
+        state.id = i;
+        state.position = panels[i].pose.position;
+        state.orientation = panels[i].pose.orientation;
+        layout.panels.push_back(state);
+    }
+    return layout;
+}
 
 constexpr int64_t kFormatSRGBA8 = 0x8C43;  // GL_SRGB8_ALPHA8
 constexpr int64_t kFormatRGBA8 = 0x8058;   // GL_RGBA8
@@ -160,6 +180,12 @@ bool XrApp::createInstance(android_app* app) {
     if (!input_.init(instance_)) {
         LOGW("input init failed; panels will not be movable");
     }
+
+    PanelConfig::load(getConfigFilePath(app_), savedLayout_);
+    if (!savedLayout_.panels.empty()) {
+        zoomLevel_ = glm::clamp(savedLayout_.zoom, kMinZoom, kMaxZoom);
+    }
+
     return true;
 }
 
@@ -358,6 +384,12 @@ void XrApp::onFrame(FramePacket&& packet) {
             return;
         }
     }
+    // Frame arrived for unknown stream!
+    static uint64_t unknownFrameCount = 0;
+    if ((++unknownFrameCount % 60) == 1) {
+        LOGW("Frame for unknown streamID=%u (have %zu decoders)", packet.streamId,
+             decoders_.size());
+    }
 }
 
 int64_t XrApp::chooseSwapchainFormat() const {
@@ -471,17 +503,22 @@ void XrApp::layOutPanels() {
     if (count == 0)
         return;
 
-    const float startAngle = -kPanelGapRadians * (static_cast<float>(count) - 1.0f) / 2.0f;
+    // Apply zoom to distance and gap
+    const float distance = kPanelDistanceMeters * zoomLevel_;
+    const float gap = kPanelGapRadians / zoomLevel_;  // Smaller gap when zoomed out
+
+    const float startAngle = -gap * (static_cast<float>(count) - 1.0f) / 2.0f;
 
     for (size_t i = 0; i < count; ++i) {
         Panel& panel = panels_[i];
-        const float angle = startAngle + kPanelGapRadians * static_cast<float>(i);
+        const float angle = startAngle + gap * static_cast<float>(i);
 
-        panel.pose.position = glm::vec3(kPanelDistanceMeters * std::sin(angle), 0.0f,
-                                        -kPanelDistanceMeters * std::cos(angle));
+        panel.pose.position =
+            glm::vec3(distance * std::sin(angle), 0.0f, -distance * std::cos(angle));
         panel.pose.orientation = glm::angleAxis(angle, glm::vec3(0.0f, 1.0f, 0.0f));
 
         const float aspect = static_cast<float>(panel.height) / static_cast<float>(panel.width);
+        // Keep panel size constant regardless of zoom
         panel.size.width = kPanelWidthMeters;
         panel.size.height = kPanelWidthMeters * aspect;
     }
@@ -610,6 +647,8 @@ void XrApp::updateHandGrab(Hand hand, Grab& grab) {
 
     if (grab.active && !state.grabbing) {
         grab.active = false;
+        PanelLayout layout = buildLayoutFromPanels(panels_, zoomLevel_);
+        PanelConfig::save(getConfigFilePath(app_), layout);
         return;
     }
 
@@ -667,7 +706,39 @@ void XrApp::updateManipulation() {
         layOutPanels();
         for (Grab& grab : grabs_)
             grab.active = false;
+        PanelLayout layout = buildLayoutFromPanels(panels_, zoomLevel_);
+        PanelConfig::save(getConfigFilePath(app_), layout);
         LOGI("panel layout reset");
+    }
+
+    bool anyGrabActive = grabs_[0].active || grabs_[1].active;
+    if (!anyGrabActive) {
+        float zoomInput = 0.0f;
+        const HandState& leftHand = input_.hand(Hand::Left);
+        const HandState& rightHand = input_.hand(Hand::Right);
+
+        if (std::abs(leftHand.thumbstickY) > 0.1f)
+            zoomInput = leftHand.thumbstickY;
+        else if (std::abs(rightHand.thumbstickY) > 0.1f)
+            zoomInput = rightHand.thumbstickY;
+
+        if (std::abs(zoomInput) > 0.1f) {
+            float oldZoom = zoomLevel_;
+            zoomLevel_ += zoomInput * kZoomStep;
+            zoomLevel_ = glm::clamp(zoomLevel_, kMinZoom, kMaxZoom);
+
+            if (oldZoom != zoomLevel_ && oldZoom > 0.0f) {
+                float zoomRatio = zoomLevel_ / oldZoom;
+                for (Panel& panel : panels_) {
+                    panel.pose.position *= zoomRatio;
+                }
+
+                updateBarPoses();
+                PanelLayout layout = buildLayoutFromPanels(panels_, zoomLevel_);
+                PanelConfig::save(getConfigFilePath(app_), layout);
+                LOGI("Zoom level: %.1fx (distance scaled by %.2fx)", zoomLevel_, zoomRatio);
+            }
+        }
     }
 
     for (Panel& panel : panels_) {
@@ -708,15 +779,16 @@ bool XrApp::buildPanels() {
     LOGI("Setting up %zu streams from server", streams.size());
     for (size_t i = 0; i < streams.size(); ++i) {
         const StreamInfo& info = streams[i];
-        LOGI("  [%zu] stream %u '%s' %ux%u %s", i, info.id, info.name.c_str(), info.width,
+        LOGI("  [%zu] stream ID=%u '%s' %ux%u %s", i, info.id, info.name.c_str(), info.width,
              info.height, info.mimeType());
     }
 
     std::vector<std::unique_ptr<StreamDecoder>> built;
+    size_t panelIndex = 0;
     for (const StreamInfo& info : streams) {
         auto decoder = std::make_unique<StreamDecoder>();
         if (!decoder->init(info)) {
-            LOGE("stream %u: decoder init failed; skipping", info.id);
+            LOGE("decoder init failed for stream ID=%u", info.id);
             continue;
         }
 
@@ -727,16 +799,19 @@ bool XrApp::buildPanels() {
         panel.decoder = decoder.get();
 
         if (!createSwapchainFor(panel, format)) {
-            LOGE("stream %u: swapchain creation failed; skipping", info.id);
+            LOGE("stream ID=%u: swapchain creation failed", info.id);
             continue;
         }
         if (!createBarSwapchainFor(panel, format)) {
-            LOGW("stream %u: handle bar unavailable", info.id);
+            LOGW("stream ID=%u: handle bar unavailable", info.id);
+        } else {
+            LOGI("  bar swapchain OK");
         }
 
         built.push_back(std::move(decoder));
         panels_.push_back(std::move(panel));
-        LOGI("stream %u: panel created successfully", info.id);
+        LOGI("Panel #%zu created: streamID=%u, decoder=%p", panelIndex, info.id, panel.decoder);
+        panelIndex++;
     }
 
     {
@@ -744,7 +819,21 @@ bool XrApp::buildPanels() {
         decoders_ = std::move(built);
     }
 
+    if (panels_.size() >= 4 && savedLayout_.panels.empty()) {
+        zoomLevel_ = 1.5f;
+    }
+
     layOutPanels();
+
+    if (!savedLayout_.panels.empty()) {
+        for (size_t i = 0; i < panels_.size() && i < savedLayout_.panels.size(); ++i) {
+            panels_[i].pose.position = savedLayout_.panels[i].position;
+            panels_[i].pose.orientation = savedLayout_.panels[i].orientation;
+        }
+        LOGI("Applied saved layout to %zu panels",
+             std::min(panels_.size(), savedLayout_.panels.size()));
+    }
+
     updateBarPoses();
     LOGI("built %zu panel(s)", panels_.size());
     return true;
@@ -768,10 +857,20 @@ void XrApp::renderPanel(Panel& panel) {
     const GLuint texture = panel.images[imageIndex].image;
     AHardwareBuffer* buffer = panel.decoder != nullptr ? panel.decoder->acquireLatest() : nullptr;
 
+    static uint64_t renderCount = 0;
+    if ((++renderCount % 300) == 0) {
+        LOGI("Rendering panel streamID=%u: decoder=%p, buffer=%p", panel.streamId, panel.decoder,
+             buffer);
+    }
+
     if (buffer != nullptr) {
         renderer_.blit(buffer, texture, panel.width, panel.height);
     } else {
         renderer_.clear(texture, panel.width, panel.height, 0.05f, 0.05f, 0.07f);
+        static uint64_t blackCount = 0;
+        if ((++blackCount % 300) == 0) {
+            LOGW("Panel streamID=%u rendering BLACK (no buffer)", panel.streamId);
+        }
     }
 
     XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
@@ -847,9 +946,6 @@ void XrApp::renderFrame() {
     xrEndFrame(session_, &endInfo);
 
     if ((++frameIndex_ % 300) == 0) {
-        LOGI("Frame %llu: %zu panels, %zu layers submitted",
-             static_cast<unsigned long long>(frameIndex_), panels_.size(),
-             static_cast<size_t>(endInfo.layerCount));
         std::lock_guard<std::mutex> lock(decodersMutex_);
         for (const auto& decoder : decoders_) {
             LOGI("  stream %u: decoded=%llu dropped=%llu", decoder->info().id,
