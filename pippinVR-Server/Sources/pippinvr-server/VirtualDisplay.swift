@@ -40,6 +40,8 @@ final class VirtualDisplay {
         width = config.width
         height = config.height
 
+        VirtualDisplay.logActiveDisplays()
+
         guard let descClass = NSClassFromString("CGVirtualDisplayDescriptor") as? NSObject.Type,
               let settingsClass = NSClassFromString("CGVirtualDisplaySettings") as? NSObject.Type,
               let modeClass = NSClassFromString("CGVirtualDisplayMode"),
@@ -111,9 +113,72 @@ final class VirtualDisplay {
 
         displayID = did
         display = disp
+
+        logDisplayDiagnostics()
+    }
+    
+    func disableMirroringInTransaction(_ config: CGDisplayConfigRef) -> Bool {
+        let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
+        
+        if result == .success {
+            Logger.debug("Configured display \(displayID) to disable mirroring")
+            return true
+        } else {
+            Logger.warning("Failed to configure mirroring disable for display \(displayID) (error: \(result.rawValue))")
+            return false
+        }
+    }
+    
+    private func logDisplayDiagnostics() {
+        let isMirrored = CGDisplayIsInMirrorSet(displayID) != 0
+        let mirrorPrimary = CGDisplayMirrorsDisplay(displayID)
+        
+        let bounds = CGDisplayBounds(displayID)
+        
+        let isMain = CGDisplayIsMain(displayID) != 0
+        
+        let isActive = CGDisplayIsActive(displayID) != 0
+        Logger.info("""
+                    VirtualDisplay created: ID=\(displayID), size=\(width)x\(height)
+                            bounds=\(bounds), isMain=\(isMain), isActive=\(isActive)
+                            isMirrored=\(isMirrored), mirrorPrimary=\(mirrorPrimary)
+                    """)
+        
+        if isMirrored {
+            Logger.warning("Display \(displayID) Mirrored")
+        }
+        
+        if mirrorPrimary != kCGNullDirectDisplay {
+            Logger.warning("Display \(displayID) is mirroring display \(mirrorPrimary)")
+        }
     }
 
     func dispose() {}
+
+    // MARK: Diagnostic functions
+    
+    private static func logActiveDisplays() {
+        var displayCount: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &displayCount) == .success else {
+            Logger.warning("Failed to get active display count")
+            return
+        }
+        
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        guard CGGetActiveDisplayList(displayCount, &displays, &displayCount) == .success else {
+            Logger.warning("Failed to get active display list")
+            return
+        }
+        
+        Logger.debug("Currently \(displayCount) active display(s) before creating new virtual display")
+        
+        for (index, displayID) in displays.enumerated() {
+            let bounds = CGDisplayBounds(displayID)
+            let isMain = CGDisplayIsMain(displayID) != 0
+            let isMirrored = CGDisplayIsInMirrorSet(displayID) != 0
+            Logger.debug("  [\(index)] ID=\(displayID), \(Int(bounds.width))x\(Int(bounds.height)), main=\(isMain), mirrored=\(isMirrored)")
+        }
+    }
 
     // MARK: Helper functions for runtime
 

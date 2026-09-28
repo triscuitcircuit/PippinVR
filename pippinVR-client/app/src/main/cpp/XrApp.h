@@ -6,6 +6,7 @@
 #include "Input.h"
 #include "Math.h"
 #include "Net.h"
+#include "PanelConfig.h"
 #include "Renderer.h"
 
 #include <openxr/openxr.h>
@@ -138,11 +139,14 @@ class XrApp {
 
     std::mutex statusMutex_;
     bool connected_ = false;
-    std::string statusMessage_ = "Waiting for server...";
+    std::string statusMessage_ = "Waiting on server";
 
     std::vector<Panel> panels_;
 
     uint64_t frameIndex_ = 0;
+
+    float zoomLevel_ = 1.0f;
+    PanelLayout savedLayout_;
 };
 
 }  // namespace pippinvr

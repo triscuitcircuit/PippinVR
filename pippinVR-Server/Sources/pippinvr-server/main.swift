@@ -134,7 +134,7 @@ func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool, dockIcon: 
     }
 
     let hasAnyFlag = args.count > 1 && args[1 ..< args.count].contains { $0.hasPrefix("--") }
-    let wantDockIcon = has("--gui") || (!hasAnyFlag && !has("--no-dock-icon"))
+    let wantDockIcon = !has("--no-dock-icon")
     let wantMenuBar = !has("--no-menu-bar")
     let isGUIMode = wantMenuBar || wantDockIcon
 

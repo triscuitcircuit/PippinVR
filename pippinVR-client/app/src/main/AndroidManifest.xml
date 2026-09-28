@@ -12,7 +12,6 @@
     <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />
 
     <application
-        android:icon="@mipmap/"
         android:label="PippinVr"
         android:allowBackup="false"
         android:hasCode="false"

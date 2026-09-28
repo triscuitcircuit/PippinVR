@@ -115,6 +115,14 @@ final class PipelineSession: @unchecked Sendable {
             await pipeline.shutdown()
         }
 
+        // Create display configuration transaction
+        var displayConfig: CGDisplayConfigRef?
+        let beginResult = CGBeginDisplayConfiguration(&displayConfig)
+        
+        if beginResult != .success || displayConfig == nil {
+            Logger.warning("Reconfigure: Failed to begin display configuration transaction")
+        }
+
         var built: [DisplayPipeline] = []
         for (index, entry) in displays.enumerated() {
             let pipeline = DisplayPipeline(streamID: UInt8(index),
@@ -124,10 +132,41 @@ final class PipelineSession: @unchecked Sendable {
                 Logger.debug(message)
             }
             try pipeline.createDisplay(index: index)
+            
+            // Configure position in transaction
+            if let config = displayConfig, let display = pipeline.display {
+                let xOffset = Int32(index) * 10000
+                let arrangeResult = CGConfigureDisplayOrigin(config, display.displayID, xOffset, 0)
+                if arrangeResult == .success {
+                    Logger.debug("Reconfigure: Configured display \(display.displayID) at x=\(xOffset)")
+                }
+            }
+            
             built.append(pipeline)
         }
 
+        if let config = displayConfig {
+            var activeDisplays: [CGDirectDisplayID] = []
+            var count: UInt32 = 0
+            CGGetActiveDisplayList(0, nil, &count)
+            if count > 0 {
+                activeDisplays = Array(repeating: 0, count: Int(count))
+                CGGetActiveDisplayList(count, &activeDisplays, &count)
+                
+                Logger.info("Reconfigure: Disabling mirroring for ALL \(count) active displays")
+                for displayID in activeDisplays {
+                    _ = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
+                }
+            }
+            
+            _ = CGCompleteDisplayConfiguration(config, .permanently)
+        }
+
         setPipelines(built, streaming: true)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.verifyAndFixMirroring(pipelines: built)
+        }
 
         try await Task.sleep(nanoseconds: 700_000_000)
 
@@ -155,20 +194,87 @@ final class PipelineSession: @unchecked Sendable {
     enum ReconfigurationError: Error, CustomStringConvertible {
         case notRunning
         case notStreaming
+        case noConfigPath
+        case displayConfigFailed
 
         var description: String {
             switch self {
             case .notRunning:
-                "reconfiguration failed: session not running"
+                "Session not running"
             case .notStreaming:
-                "reconfiguration failed: not currently streaming"
+                "Not streaming"
+            case .noConfigPath:
+                "Config path not specified"
+            case .displayConfigFailed:
+                "Display Configration failed"
             }
         }
     }
 
+    func verifyAndFixMirroring(pipelines: [DisplayPipeline]) {
+        var activeDisplays: [CGDirectDisplayID] = []
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &count)
+        if count > 0 {
+            activeDisplays = Array(repeating: 0, count: Int(count))
+            CGGetActiveDisplayList(count, &activeDisplays, &count)
+        }
+        
+        var foundMirroring = false
+        for displayID in activeDisplays {
+            let mirrorSource = CGDisplayMirrorsDisplay(displayID)
+            if mirrorSource != kCGNullDirectDisplay {
+                Logger.warning("Display mirrored \(mirrorSource) after transaction")
+                foundMirroring = true
+            }
+        }
+        
+        if foundMirroring {
+            var config: CGDisplayConfigRef?
+            let beginResult = CGBeginDisplayConfiguration(&config)
+            guard beginResult == .success, let config = config else {
+                Logger.error("Failed to create fix transaction: \(beginResult.rawValue)")
+                return
+            }
+            
+            for displayID in activeDisplays {
+                let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
+                if result == .success {
+                    Logger.debug("Fixed mirroring for display \(displayID)")
+                } else {
+                    Logger.warning("Failed to fix mirroring for display \(displayID)")
+                }
+            }
+            
+            let completeResult = CGCompleteDisplayConfiguration(config, .permanently)
+            if completeResult == .success {
+                Logger.info("Mirror screen changed")
+            } else {
+                Logger.error("Mirroring fix transaction failed: \(completeResult.rawValue)")
+            }
+        } else {
+            Logger.info("Mirroring verification passed - no mirrors detected")
+        }
+    }
+    
     func resetToDefault() async throws {
         let defaultConfig = ServerConfig.defaultConfig()
         try await reconfigure(displays: defaultConfig.displays)
+    }
+    
+    func loadConfig(path: String) async throws {
+        let (loadedConfig, _) = ServerConfig.loadOrCreate(path: path)
+        options.configPath = path
+        options.config = loadedConfig
+        try await reconfigure(displays: loadedConfig.displays)
+        Logger.info("\(path) Config loaded")
+    }
+    
+    func reloadConfig() async throws {
+        guard let path = options.configPath else {
+            throw ReconfigurationError.noConfigPath
+        }
+        try await loadConfig(path: path)
     }
 
     func isDeviceConnected(_ deviceID: String) -> Bool {
@@ -277,7 +383,6 @@ final class PipelineSession: @unchecked Sendable {
             armAdbReverse(port: port)
         }
 
-        // 2. Either stream immediately, or wait for a viewer first.
         let waitMode = sinkNeedsClient && options.waitForClient
         if !waitMode {
             if sinkNeedsClient {
@@ -360,6 +465,14 @@ final class PipelineSession: @unchecked Sendable {
         let config = options.config
 
         var built: [DisplayPipeline] = []
+
+        var displayConfig: CGDisplayConfigRef?
+        let beginResult = CGBeginDisplayConfiguration(&displayConfig)
+        
+        if beginResult != .success || displayConfig == nil {
+            Logger.warning("Displays may overlap")
+        }
+        
         for (index, entry) in config.displays.enumerated() {
             let pipeline = DisplayPipeline(streamID: UInt8(index),
                                            entry: entry,
@@ -368,10 +481,53 @@ final class PipelineSession: @unchecked Sendable {
                 Logger.debug(message)
             }
             try pipeline.createDisplay(index: index)
+
+            if let config = displayConfig, let display = pipeline.display {
+                let xOffset = Int32(index) * 10000
+                let arrangeResult = CGConfigureDisplayOrigin(config, display.displayID, xOffset, 0)
+                if arrangeResult == .success {
+                    Logger.debug("Configured display \(display.displayID) position at x=\(xOffset)")
+                } else {
+                    Logger.warning("Failed to configure position for display \(display.displayID) at x=\(xOffset) (error: \(arrangeResult.rawValue))")
+                }
+            }
+            
             built.append(pipeline)
         }
 
+        if let config = displayConfig {
+            var activeDisplays: [CGDirectDisplayID] = []
+            var count: UInt32 = 0
+            CGGetActiveDisplayList(0, nil, &count)
+            if count > 0 {
+                activeDisplays = Array(repeating: 0, count: Int(count))
+                CGGetActiveDisplayList(count, &activeDisplays, &count)
+                
+                for displayID in activeDisplays {
+                    let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
+                    if result == .success {
+                        Logger.debug("Disabled mirroring for display \(displayID)")
+                    } else {
+                        Logger.warning("Failed to disable mirroring for display \(displayID) (error: \(result.rawValue))")
+                    }
+                }
+            }
+            
+            let completeResult = CGCompleteDisplayConfiguration(config, .permanently)
+            if completeResult == .success {
+                Logger.info("Successfully arranged \(built.count) displays in non-overlapping positions")
+            } else {
+                Logger.warning("Failed to commit display arrangement (error: \(completeResult.rawValue))")
+            }
+        }
+
         setPipelines(built, streaming: true)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.verifyAndFixMirroring(pipelines: built)
+        }
+
+        logFinalDisplayConfiguration(pipelines: built)
 
         try await Task.sleep(nanoseconds: 700_000_000)
 
@@ -384,6 +540,24 @@ final class PipelineSession: @unchecked Sendable {
         for pipeline in built {
             try await pipeline.startCapture()
         }
+    }
+    
+    private func logFinalDisplayConfiguration(pipelines: [DisplayPipeline]) {
+        Logger.info("Created \(pipelines.count) new pipeline(s)")
+
+        var displayCount: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &displayCount) == .success else {
+            Logger.warning("Could not get active display count")
+            return
+        }
+        
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        guard CGGetActiveDisplayList(displayCount, &displays, &displayCount) == .success else {
+            Logger.warning("Could not get active display list")
+            return
+        }
+        
+        Logger.info("Total active displays in system: \(displayCount)")
     }
 
     private func stopStreaming() async {
