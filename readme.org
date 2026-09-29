@@ -34,7 +34,7 @@ This project was created out of the frustration that all MacOS VR virtual screen
 
 ~PippinVR~ is named after the Apple Pippin, which itself was named after a relative to the McIntosh apple. The Apple Pippin was meant to be more than a platform just for game consoles, which is what I see VR to be as well.
 
-This code is under the GNUv3 license as I feel strongly that any derivatives of this software should also be Open Source. Contributions are welcome and encouraged.
+This code is under the GPLv3 license as I feel strongly that any derivatives of this software should also be Open Source. Contributions are welcome and encouraged.
 #+BEGIN_QUOTE
 "Given enough eyeballs, all bugs are shallow" - Eric S. Raymond (The Cathedral and the Bazaar)
 #+END_QUOTE
@@ -119,10 +119,9 @@ The server creates Virtual displays through the ~CGVirtualDisplay~, sends it to 
 [[file:figures/UML_Lifetimes.png]]
 Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to ~FrameSink~.
 ** Known Issues
-- More than three screens has issues of collision, causing the fourth "virtual" screen becoming the Mac screen. This is being worked on.
-- Virtual Display positions are not saved after refresh/reboot.
 - Meta Quest remote polling sometimes stops working after wake.
 - Stale displays with old content will stay in the headset when the ~PippinVR~ app is disconnected.
+- Connected iPadOS and iOS devices are stuck with 1920x1080 landscape resolutions.
 * Contributing
 Contributions are welcome and encouraged (as per the GNUv3 License). To contribute, make sure to use the ~.pre-commit~ file. To do so, make sure to install via [[https://formulae.brew.sh/formula/pre-commit][Homebrew]].
 #+begin_src sh
@@ -130,4 +129,4 @@ Contributions are welcome and encouraged (as per the GNUv3 License). To contribu
 #+end_src
 This project will take contributions in the form of pull-requests.
 * License
-GNU GENERAL PUBLIC LICENSE VERSION 3 (GNUv3).
+GNU GENERAL PUBLIC LICENSE VERSION 3 (GPLv3).
