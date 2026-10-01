@@ -35,6 +35,16 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+
+      - name: Install NDK & CMake
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "ndk;27.0.12077973" \
+            "cmake;3.22.1"
 
       - name: Install NDK & CMake
         run: sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
@@ -83,6 +93,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3.2.2
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
 
       - name: Generate and submit dependency graph
         uses: gradle/actions/dependency-submission@v4
