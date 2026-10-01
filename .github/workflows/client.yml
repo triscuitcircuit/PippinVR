@@ -74,8 +74,8 @@ jobs:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
           files: pippinVR-client/app/build/outputs/apk/debug/*.apk
           generate_release_notes: true
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dependency-submission:
     name: Dependency graph
