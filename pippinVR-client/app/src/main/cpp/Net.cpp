@@ -214,7 +214,7 @@ bool StreamClient::readFrame(FramePacket& out) {
 
     const uint32_t length = be32(hdr + 2);
     if (length == 0 || length > kMaxPayload) {
-        LOGE("Stream out of sync", length);
+        LOGE("Stream out of sync %d", length);
         return false;
     }
 
