@@ -10,13 +10,9 @@ build-server:
 build-server-app:
 	@cd pippinVR-Server && ./build-app.sh release
 
-# Universal (arm64 + x86_64) app wrapped in a DMG, matching what CI produces.
-# Unsigned unless CODESIGN_IDENTITY is exported; see .github/APPLE_SIGNING.md
 build-dmg:
 	@cd pippinVR-Server && UNIVERSAL=1 ./build-app.sh release && ./package-dmg.sh
 
-# Regenerate the committed Finder window layout. Needs a GUI session, which is
-# why CI reuses the committed result instead of running this.
 dmg-layout: build-server-app
 	@cd pippinVR-Server && ./make-dmg-layout.sh
 

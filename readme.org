@@ -62,7 +62,20 @@ Dynamic framerate of each virtual screen conserves bandwidth using the wire.
 * Installation
 This respsitory contains both the ~PippinVR-Server~, the server running on MacOS, and ~PippinVR-Client~, a client running on a Meta headset.
 Because this code was created with wire transmission in mind, it makes use of Android Debug Bridge (adb) and SideQuest.
-** Requirements
+** Installation off Github
+The [[https://github.com/triscuitcircuit/PippinVR/releases][Releases]] tab on Github should have the most up to date installer file for the server (`.dmg`), as well as the `app-debug.apk`.
+
+The server (`.dmg`) file should be mounted with MacOs, and ~PippinVR~ can then be installed by dragging and dropping into the ~/Applications~ folder.
+
+The client (`.apk`) needs to be sideloaded onto the headset. This can be done through SideQuest (or by adb).
+- *SideQuest* : Select the "Sideload" option and drag `app-debug.apk` into the drop zone.
+- *ADB* : use the command line and run `adb install app-debug.apk` to install onto the headset.
+
+Make sure that ~adb~ is listening on the specifically bounded port for Pippin (as `adb` is not bundled yet).
+#+BEGIN_SRC sh
+   adb reverse tcp:9943 tcp:9943
+#+END_SRC
+** Requirements for building from source
 The following requirements are necessary for running ~PippinVR~:
 - [[https://brew.sh/][MacOS Homebrew]]
 - [[https://sidequestvr.com/setup-howto][SideQuest]] (V 1.21)
