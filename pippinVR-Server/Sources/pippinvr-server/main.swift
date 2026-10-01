@@ -203,6 +203,9 @@ let session = PipelineSession(options: options)
 activeSession = session
 
 Task { @MainActor in
+    if wantDockIcon {
+            MainMenu.install()
+        }
     var statusController: StatusItemController?
     if wantMenuBar {
         statusController = StatusItemController(session: session) {

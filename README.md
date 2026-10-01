@@ -4,14 +4,15 @@
 1.  [PippinVR](#org7f16d57)
 2.  [About](#orgd98eb26)
     1.  [Capabilities](#org99c01cb)
-3.  [Installation](#org9639605)
-    1.  [Requirements](#org0ce0959)
-        1.  [Pippin-VR Server](#org7925b9e)
-        2.  [Pippin-VR Client](#orgee35afe)
-4.  [Design](#orgb948b55)
-    1.  [Known Issues](#org7f6f53b)
-5.  [Contributing](#org9beed48)
-6.  [License](#org2dc1f56)
+3.  [Installation](#org7f6f53b)
+    1.  [Installation off Github](#org7925b9e)
+    2.  [Requirements for building from source](#org9639605)
+        1.  [Pippin-VR Server](#orgee35afe)
+        2.  [Pippin-VR Client](#org0ce0959)
+4.  [Design](#org9beed48)
+    1.  [Known Issues](#orgb948b55)
+5.  [Contributing](#org2dc1f56)
+6.  [License](#orgde0f8b8)
 
 <div align="center">
 
@@ -67,7 +68,7 @@ Dynamic framerate of each virtual screen conserves bandwidth using the wire.
 </div>
 
 
-<a id="org9639605"></a>
+<a id="org7f6f53b"></a>
 
 # Installation
 
@@ -75,9 +76,27 @@ This respsitory contains both the `PippinVR-Server`, the server running on MacOS
 Because this code was created with wire transmission in mind, it makes use of Android Debug Bridge (adb) and SideQuest.
 
 
-<a id="org0ce0959"></a>
+<a id="org7925b9e"></a>
 
-## Requirements
+## Installation off Github
+
+The [Releases](https://github.com/triscuitcircuit/PippinVR/releases) tab on Github should have the most up to date installer file for the server (\`.dmg\`), as well as the \`app-debug.apk\`.
+
+The server (\`.dmg\`) file should be mounted with MacOs, and `PippinVR` can then be installed by dragging and dropping into the `/Applications` folder.
+
+The client (\`.apk\`) needs to be sideloaded onto the headset. This can be done through SideQuest (or by adb).
+
+-   **SideQuest** : Select the "Sideload" option and drag \`app-debug.apk\` into the drop zone.
+-   **ADB** : use the command line and run \`adb install app-debug.apk\` to install onto the headset.
+
+Make sure that `adb` is listening on the specifically bounded port for Pippin (as \`adb\` is not bundled yet).
+
+    adb reverse tcp:9943 tcp:9943
+
+
+<a id="org9639605"></a>
+
+## Requirements for building from source
 
 The following requirements are necessary for running `PippinVR`:
 
@@ -93,7 +112,7 @@ The following requirements are necessary for running `PippinVR`:
 -   MacOS (tested on MacOS 26.6)
 
 
-<a id="org7925b9e"></a>
+<a id="orgee35afe"></a>
 
 ### Pippin-VR Server
 
@@ -121,7 +140,7 @@ It should compile and install the server application as a \`.app\`. The first ru
 Pippin-VR server has a settings menu that can be accessed from the menu bar. The settings menu allows changing the screen configurations while displaying to the headset. Displays can be added or removed, with instant refresh once the settings have been applied.
 
 
-<a id="orgee35afe"></a>
+<a id="org0ce0959"></a>
 
 ### Pippin-VR Client
 
@@ -135,7 +154,7 @@ To build and install the client on the headset, the following make command calls
 > Make sure a `local.properties` in `pippinVR-client` file contains \`sdk.dir\` and points to the android sdk. An example file called `local.properties.example` is provided.
 
 
-<a id="orgb948b55"></a>
+<a id="org9beed48"></a>
 
 # Design
 
@@ -148,7 +167,7 @@ The server creates Virtual displays through the `CGVirtualDisplay`, sends it to 
 Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to `FrameSink`.
 
 
-<a id="org7f6f53b"></a>
+<a id="orgb948b55"></a>
 
 ## Known Issues
 
@@ -157,7 +176,7 @@ Actor diagram for lifetimes of the client. Showcases the loop of frame encoding 
 -   Connected iPadOS and iOS devices are stuck with 1920x1080 landscape resolutions.
 
 
-<a id="org9beed48"></a>
+<a id="org2dc1f56"></a>
 
 # Contributing
 
@@ -168,7 +187,7 @@ Contributions are welcome and encouraged (as per the GNUv3 License). To contribu
 This project will take contributions in the form of pull-requests.
 
 
-<a id="org2dc1f56"></a>
+<a id="orgde0f8b8"></a>
 
 # License
 

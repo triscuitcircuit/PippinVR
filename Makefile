@@ -1,4 +1,4 @@
-.PHONY: all build build-server build-server-app build-client build-client-release clean clean-server clean-client install install-server install-server-app install-client help
+.PHONY: all build build-server build-server-app build-dmg dmg-layout build-client build-client-release clean clean-server clean-client install install-server install-server-app install-client help
 
 all: build-server-app
 
@@ -9,6 +9,12 @@ build-server:
 
 build-server-app:
 	@cd pippinVR-Server && ./build-app.sh release
+
+build-dmg:
+	@cd pippinVR-Server && UNIVERSAL=1 ./build-app.sh release && ./package-dmg.sh
+
+dmg-layout: build-server-app
+	@cd pippinVR-Server && ./make-dmg-layout.sh
 
 build-client:
 	@echo "Building PippinVR Client as debug"
@@ -24,6 +30,7 @@ clean-server:
 	@cd pippinVR-Server && swift package clean
 	@rm -rf pippinVR-Server/.build
 	@rm -rf pippinVR-Server/PippinVR.app
+	@rm -rf pippinVR-Server/dist
 
 clean-client:
 	@cd pippinVR-client && ./gradlew clean
@@ -58,6 +65,8 @@ help:
 	@echo ""
 	@echo "Server Targets:"
 	@echo "  make build-server-app   - Build PippinVR.app bundle"
+	@echo "  make build-dmg          - Build universal app + DMG installer"
+	@echo "  make dmg-layout         - Regenerate DMG window layout (needs GUI)"
 	@echo "  make build-server       - Build server executable only"
 	@echo "  make install-server-app - Install app to /Applications"
 	@echo "  make install-server     - Install executable to /usr/local/bin"

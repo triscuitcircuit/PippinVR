@@ -1,0 +1,19 @@
+gradlew       text eol=lf
+gradlew.bat   text eol=crlf
+
+
+*.jar         binary
+*.apk         binary
+*.dmg         binary
+*.p12         binary
+*.icns        binary
+*.pdf         binary
+*.png         binary
+*.gif         binary
+*.jpg         binary
+*.JPG         binary
+
+
+pippinVR-Server/Resources/dmg/DS_Store binary
+
+*.sh          text eol=lf
