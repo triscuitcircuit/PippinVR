@@ -82,7 +82,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v3.2.2
 
       - name: Generate and submit dependency graph
         uses: gradle/actions/dependency-submission@v4
