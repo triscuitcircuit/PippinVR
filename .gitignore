@@ -7,6 +7,10 @@
 /pippinVR-Server/.build/
 /pippinVR-Server/PippinVR.app/
 /pippinVR-Server/dist/
+# Cloned on demand by build_scripts/build-monado.sh -- not submodules, not
+# vendored source, just fetched build inputs.
+/pippinVR-Server/third_party/openxr-sdk/
+/pippinVR-Server/third_party/eigen-3.4.0/
 
 /gradle/
 .gradle/

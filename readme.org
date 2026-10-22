@@ -39,7 +39,17 @@ This code is under the GPLv3 license as I feel strongly that any derivatives of 
 "Given enough eyeballs, all bugs are shallow" - Eric S. Raymond (The Cathedral and the Bazaar)
 #+END_QUOTE
 ** Capabilities
-So far ~PippinVR~ can cast multiple screens from a Mac into a virtual space. It also has the ability to overlay the screens in passthrough, or cycle through settings with "B" (top button on a Meta Quest controller). The screens can be moved with the controller and placed individually.
+~PippinVR~ has two modes:
+- Connecting via QuestLink USB
+- APK connection
+*** USB Direct (QuestLink)
+This mode connects without using an APK and calls the headsets Questlink over XRSP and uses Vulkan (MoltenVK) to render natively on the mac. It creates its own environmentto add screens and load OpenXR games (currently only works with Godot).
+
+Otherwise, works the same as the APK USB mode besides the fact that it does not have passthrough.
+
+To connect, trigger a USB connection in the task bar menu ("Connect USB") with a headset connected, and then go the connect prompt within the headset quick menu.
+*** APK USB
+~PippinVR~ can cast multiple screens from a Mac into a virtual space. It also has the ability to overlay the screens in passthrough, or cycle through settings with "B" (top button on a Meta Quest controller). The screens can be moved with the controller and placed individually.
 
 Zooming in and out of the virtual screen space using forward in back with the controller sticks  is supported.
 
@@ -51,7 +61,7 @@ Dynamic framerate of each virtual screen conserves bandwidth using the wire.
 
 ~PippinVR~ supports as many displays as your system can handle. They can be configured and added by the settings menu. The only limit is finding your mouse in the screens.
 
-~PippinVR~ also supports streaming of iOS or iPadOS screens as a virtual screen using USB.
+~PippinVR~ also supports streaming of iOS or iPadOS screens as a virtual screen using APK USB.
 #+begin_export md
 <div align="center">
 #+end_export
@@ -59,6 +69,7 @@ Dynamic framerate of each virtual screen conserves bandwidth using the wire.
 #+begin_export md
 </div>
 #+end_export
+***
 * Installation
 This respsitory contains both the ~PippinVR-Server~, the server running on MacOS, and ~PippinVR-Client~, a client running on a Meta headset.
 Because this code was created with wire transmission in mind, it makes use of Android Debug Bridge (adb) and SideQuest.

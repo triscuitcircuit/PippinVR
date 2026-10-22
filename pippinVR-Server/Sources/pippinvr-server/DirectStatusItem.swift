@@ -19,6 +19,28 @@ final class DirectStatusItemController: NSObject, ObservableObject {
     @Published var deviceInfo: [USBLinkSpeed.DeviceInfo] = []
     @Published var settingsMenu = NSMenu()
     @Published var apps: [AppEntry] = []
+    // Settings' Environment tab owns the UI for these -- see
+    // chooseEnvironmentImage/clearEnvironmentImage/toggle*Flip below. The
+    // image/flip state itself isn't known to the real Newt/Monado-side
+    // renderer (which just receives one-shot "environment:PATH" /
+    // "environment-flip-v" / "environment-flip-h" / "environment-clear"
+    // commands, see DirectMonadoSession.command), so it's tracked here only
+    // so the Environment tab can still show *something* -- a preview and
+    // the current flip state -- after Settings is closed and reopened.
+    @Published var environmentImageURL: URL?
+    @Published var environmentFlippedVertically = false
+    @Published var environmentFlippedHorizontally = false
+    // Settings' Screens tab lets the user type a custom size before hitting
+    // Add Screen, mirroring Quest Client's per-DisplayEntry width/height
+    // fields -- unlike panelWidth (the VR-side capture/panel texture size,
+    // picked from 3 presets), this is the actual macOS virtual display's
+    // resolution, so it's unbounded free-form like DisplayEntry's.
+    @Published var nextScreenWidth = UserDefaults.standard.integer(forKey: "directNextScreenWidth") == 0 ? 1920 : UserDefaults.standard.integer(forKey: "directNextScreenWidth") {
+        didSet { UserDefaults.standard.set(nextScreenWidth, forKey: "directNextScreenWidth") }
+    }
+    @Published var nextScreenHeight = UserDefaults.standard.integer(forKey: "directNextScreenHeight") == 0 ? 1200 : UserDefaults.standard.integer(forKey: "directNextScreenHeight") {
+        didSet { UserDefaults.standard.set(nextScreenHeight, forKey: "directNextScreenHeight") }
+    }
     private var switchingApplication = false
     private var presentingPicker = false
     private var returnToDashboard = false
@@ -32,7 +54,12 @@ final class DirectStatusItemController: NSObject, ObservableObject {
 
     func install() {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Fallback matters here: if "visionpro" isn't a resolvable SF Symbol
+        // on this system/SDK, image silently ends up nil and the status item
+        // renders completely blank -- present, but invisible.
         item?.button?.image = NSImage(systemSymbolName: "visionpro", accessibilityDescription: "PippinVR Direct USB")
+            ?? NSImage(systemSymbolName: "display", accessibilityDescription: "PippinVR Direct USB")
+        item?.button?.image?.isTemplate = true
         if let appMenu = NSApp.mainMenu?.items.first?.submenu {
             let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
             settings.target = self
@@ -93,22 +120,27 @@ final class DirectStatusItemController: NSObject, ObservableObject {
             if state.error == nil { session.connect(); return }
         }
         if !state.running { virtualDisplays.removeAll(); panelSources = [nil] }
-        menu.addItem(withTitle: state.running ? (session.applicationName.map { "3D app: \($0)" } ?? "Direct USB session active / connecting") : (present ? "Quest available — ready to connect" : "Connect a Quest USB cable"), action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: state.running ? (session.applicationName.map { "3D app: \($0)" } ?? "Direct USB session active") : (present ? "Ready to connect" : "Connect a Quest USB cable"), action: nil, keyEquivalent: "")
         let connect = menu.addItem(withTitle: state.running ? (session.applicationName == nil ? "Disconnect (fade out)" : "Return to Pippin") : "Connect USB Direct", action: #selector(toggleConnection), keyEquivalent: "")
         connect.target = self
         connect.isEnabled = !switchingApplication && (state.running || present)
-        let launch = menu.addItem(withTitle: "Launch 3D App…", action: #selector(launch3DApp), keyEquivalent: "")
+        let launch = menu.addItem(withTitle: defaultAppTitle.map { "Launch: \($0)" } ?? "Launch 3D App…", action: #selector(launch3DApp), keyEquivalent: "")
         launch.target = self
         launch.isEnabled = present && !switchingApplication
+        if defaultAppTitle != nil {
+            let change = menu.addItem(withTitle: "Change Default 3D App…", action: #selector(chooseDefault3DApp), keyEquivalent: "")
+            change.target = self
+            change.isEnabled = present && !switchingApplication
+        }
         let media = menu.addItem(withTitle: "Add Media…", action: #selector(addMediaFile), keyEquivalent: "")
         media.target = self
         media.isEnabled = state.running && session.applicationName == nil && panelSources.count < maxPanels
         if let error = state.error { menu.addItem(withTitle: "Last connection: \(error)", action: nil, keyEquivalent: "") }
-        menu.addItem(withTitle: "Uses Quest Link; no Pippin APK required", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: "Uses Quest Link", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
         let settings = menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
-        let questClient = menu.addItem(withTitle: "Use Quest Client (TCP)…", action: #selector(switchToQuestClient), keyEquivalent: "")
+        let questClient = menu.addItem(withTitle: "Use Quest APK Client", action: #selector(switchToQuestClient), keyEquivalent: "")
         questClient.target = self
         questClient.isEnabled = !switchingApplication
         menu.addItem(.separator())
@@ -146,9 +178,10 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         let cameraItem = menu.addItem(withTitle: "Add Camera Feed", action: nil, keyEquivalent: "")
         cameraItem.submenu = cameras
         action("Add Video / Media Feed", "add-media", menu: menu)
+        action("Remove Video / Media Feed", "remove-media", menu: menu)
         action("Remove Last Panel", "remove-last", menu: menu)
         action("Reset Panel Positions", "reset", menu: menu)
-        menu.addItem(withTitle: "Up to 6 panels · trigger selects next panel", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: "Up to \(maxPanels) panels · trigger selects next panel", action: nil, keyEquivalent: "")
         menu.addItem(withTitle: "Hide dashboard: sticks move / resize · squeeze grabs and rotates", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
         let stereo = NSMenu()
@@ -261,24 +294,55 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         }
         do {
             var config = DisplayConfig()
-            config.width = 1920
-            config.height = 1200
+            // CGVirtualDisplay rejects odd dimensions, matching the same
+            // constraint Config.swift enforces on Quest Client's DisplayEntry.
+            config.width = min(max(nextScreenWidth, 2), 16384) / 2 * 2
+            config.height = min(max(nextScreenHeight, 2), 16384) / 2 * 2
             config.refreshHz = Double(captureFPS)
             config.hiDPI = false
             config.serial = nextSerial
+            // Every virtual display previously shared the same hardcoded
+            // vendorID/productID, varying only by serial -- CGVirtualDisplay
+            // (and macOS's window server mode/arrangement cache) can treat
+            // displays with matching vendor+product as the same model and
+            // reuse/share a single preferred mode across them, which looks
+            // exactly like "adding screen #2 at a new size also resizes
+            // screen #1." Deriving productID from the serial gives each
+            // virtual display a genuinely distinct identity.
+            config.productID = 0x1234 + nextSerial
             nextSerial += 1
             config.name = "PippinVR Direct \(virtualDisplays.count + 1)"
             let display = try VirtualDisplay(config: config)
-            var transaction: CGDisplayConfigRef?
-            if CGBeginDisplayConfiguration(&transaction) == .success, let transaction {
-                if display.disableMirroringInTransaction(transaction) {
-                    CGCompleteDisplayConfiguration(transaction, .forSession)
-                } else { CGCancelDisplayConfiguration(transaction) }
-            }
             virtualDisplays.append(display)
+            // A single, first-ever virtual display showed mirrored=true
+            // immediately on creation, with nothing else active to mirror --
+            // it mirrors something (almost certainly the real display) from
+            // the moment it exists, regardless of position. And the
+            // un-mirror/reposition calls both failed (error 1001) only on
+            // the display *just* created, while succeeding on already-
+            // existing ones -- as if the window server hasn't finished
+            // registering a brand new CGVirtualDisplay in the same
+            // transaction pass as its own creation. Retry shortly after,
+            // once it's had time to settle, instead of only trying once
+            // immediately.
+            fixupDisplayArrangement()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.fixupDisplayArrangement() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.fixupDisplayArrangement() }
             panelSources.append(display.displayID)
             session.command("add-display:\(display.displayID)")
             session.command("notice:Virtual screen added — Hide dashboard to arrange it")
+            // Diagnostic: if any cached displayID below doesn't match its
+            // live re-query, the window server reassigned IDs out from
+            // under us -- a separate possible explanation for the same bug.
+            for (index, tracked) in virtualDisplays.enumerated() {
+                let cached = tracked.displayID
+                let live = tracked.liveDisplayID
+                if cached != live {
+                    Logger.warning("VirtualDisplay[\(index)] ID reassigned: cached=\(cached) live=\(live)")
+                } else {
+                    Logger.debug("VirtualDisplay[\(index)] ID stable: \(cached)")
+                }
+            }
         } catch {
             session.command("notice:Could not create screen — check Mac Settings")
             let alert = NSAlert()
@@ -286,6 +350,26 @@ final class DirectStatusItemController: NSObject, ObservableObject {
             alert.informativeText = String(describing: error)
             alert.runModal()
         }
+    }
+
+    // Un-mirrors and lays out every tracked virtual display side by side.
+    // Idempotent and safe to call repeatedly -- already-correct displays
+    // just report back "nothing to do" / "ok" again.
+    private func fixupDisplayArrangement() {
+        var transaction: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&transaction) == .success, let transaction else { return }
+        var originX: Int32 = 0
+        for (index, tracked) in virtualDisplays.enumerated() {
+            if tracked.disableMirroringInTransaction(transaction) {
+                Logger.debug("Un-mirrored VirtualDisplay[\(index)] (ID=\(tracked.displayID))")
+            } else {
+                Logger.debug("VirtualDisplay[\(index)] (ID=\(tracked.displayID)) had nothing to un-mirror")
+            }
+            let originErr = CGConfigureDisplayOrigin(transaction, tracked.displayID, originX, 0)
+            Logger.debug("Positioned VirtualDisplay[\(index)] (ID=\(tracked.displayID)) at x=\(originX): \(originErr == .success ? "ok" : "error \(originErr.rawValue)")")
+            originX += Int32(tracked.width)
+        }
+        CGCompleteDisplayConfiguration(transaction, .forSession)
     }
 
     @objc private func addMediaFile() {
@@ -305,6 +389,50 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         sendCommand(entry)
         session.command("notice:Media added — stereo options are in Mac Settings")
         rebuild()
+    }
+
+    // Lives in Settings' Environment tab, not the status-bar menu -- see
+    // SettingsView.swift's environmentPanel. Equirectangular panoramas are
+    // inconsistently authored (upside down, mirrored, 90/180 off) depending
+    // on what captured/converted them, so flip is a live toggle rather than
+    // something to get "correct" once and bake in.
+    func chooseEnvironmentImage() {
+        guard !presentingPicker else { return }
+        presentingPicker = true
+        defer { presentingPicker = false }
+        guard session.state.running && session.applicationName == nil else { return }
+        let picker = NSOpenPanel()
+        picker.title = "Choose a 360 panoramic image"
+        picker.message = "Equirectangular (360×180) images work best — this wraps around a sphere."
+        picker.allowedContentTypes = [.image]
+        NSApp.activate(ignoringOtherApps: true)
+        guard picker.runModal() == .OK, let url = picker.url else {
+            session.command("notice:Environment selection cancelled"); return
+        }
+        guard !url.path.contains("\n") && !url.path.contains("\r") else { return }
+        session.command("environment:\(url.path)")
+        environmentImageURL = url
+        environmentFlippedVertically = false
+        environmentFlippedHorizontally = false
+    }
+
+    func clearEnvironmentImage() {
+        session.command("environment-clear")
+        environmentImageURL = nil
+        environmentFlippedVertically = false
+        environmentFlippedHorizontally = false
+    }
+
+    func toggleEnvironmentFlipVertical() {
+        guard environmentImageURL != nil else { return }
+        session.command("environment-flip-v")
+        environmentFlippedVertically.toggle()
+    }
+
+    func toggleEnvironmentFlipHorizontal() {
+        guard environmentImageURL != nil else { return }
+        session.command("environment-flip-h")
+        environmentFlippedHorizontally.toggle()
     }
 
     func presentAddAppPicker() {
@@ -374,14 +502,42 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         }
     }
 
+    /// Remembered so the in-headset Apps tile can launch directly -- a
+    /// picker is a Mac-side modal dialog with no presence in the headset:
+    /// squeezing the trigger on the dashboard's Apps tile fires this
+    /// correctly, but then waits on a dialog the user wearing the headset
+    /// can't see or click, which looks exactly like the launch silently
+    /// doing nothing.
+    private var defaultAppPath: String? {
+        get { UserDefaults.standard.string(forKey: "directDefaultAppPath") }
+        set { UserDefaults.standard.set(newValue, forKey: "directDefaultAppPath") }
+    }
+    private var defaultAppTitle: String? {
+        get { UserDefaults.standard.string(forKey: "directDefaultAppTitle") }
+        set { UserDefaults.standard.set(newValue, forKey: "directDefaultAppTitle") }
+    }
+
     @objc private func launch3DApp() {
         guard !switchingApplication && !presentingPicker else { return }
+        if let saved = defaultAppPath, FileManager.default.isExecutableFile(atPath: saved) {
+            launchApp(at: URL(fileURLWithPath: saved))
+            return
+        }
+        chooseAndLaunch3DApp()
+    }
+
+    @objc private func chooseDefault3DApp() {
+        guard !switchingApplication && !presentingPicker else { return }
+        chooseAndLaunch3DApp()
+    }
+
+    private func chooseAndLaunch3DApp() {
         presentingPicker = true
         defer { presentingPicker = false }
         NSApp.activate(ignoringOtherApps: true)
         let picker = NSOpenPanel()
         picker.title = "Choose a native OpenXR application"
-        picker.message = "Choose a Mac .app or executable that supports OpenXR. Pippin releases USB Link while it runs and returns to the dashboard when it exits."
+        picker.message = "Choose a Mac .app or executable that supports OpenXR. Pippin releases USB Link while it runs and returns to the dashboard when it exits. Remembered for next time -- use \"Change Default 3D App…\" to pick a different one."
         picker.canChooseFiles = true; picker.canChooseDirectories = false
         guard picker.runModal() == .OK, let chosen = picker.url else {
             session.command("notice:App selection cancelled"); return
@@ -390,6 +546,13 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             let alert=NSAlert(); alert.messageText="Choose an executable Mac OpenXR app"; alert.runModal(); return
         }
+        defaultAppPath = executable.path
+        defaultAppTitle = chosen.deletingPathExtension().lastPathComponent
+        rebuild()
+        launchApp(at: executable)
+    }
+
+    private func launchApp(at executable: URL) {
         switchingApplication = true
         returnToDashboard = false
         rebuild()

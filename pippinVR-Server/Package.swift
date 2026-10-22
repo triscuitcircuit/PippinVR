@@ -2,15 +2,27 @@
 import Foundation
 import PackageDescription
 
-// Direct USB (Monado/Newt) is opt-in at build time: it lights up only when
-// build-newt.sh has installed Newt's archives into .build/newt-package.
-// Without them the package builds exactly the Quest-client server it always
-// did -- the Direct* sources are excluded and PIPPINVR_DIRECT stays unset.
-// The NEWT_* library files themselves live in the separate Newt repository;
-// nothing of Newt is vendored here beyond its public C headers (NewtBridge/).
 let newtArchive = Context.packageDirectory + "/.build/newt-package/lib/libnewt_core.a"
 let directEnabled = FileManager.default.fileExists(atPath: newtArchive)
 let xrVendorLibDir = Context.packageDirectory + "/.build/monado-vendor/lib"
+
+func detectVulkanSDK() -> String? {
+    if let override = ProcessInfo.processInfo.environment["VULKAN_SDK"] { return override }
+    let fm = FileManager.default
+    let base = fm.homeDirectoryForCurrentUser.path + "/VulkanSDK"
+    guard let versions = try? fm.contentsOfDirectory(atPath: base) else { return nil }
+    for version in versions.sorted(by: >) {
+        let candidate = base + "/" + version + "/macOS"
+        if fm.fileExists(atPath: candidate + "/include/vulkan/vulkan.h") { return candidate }
+    }
+    return nil
+}
+
+func detectOpenXRIncludeDir() -> String? {
+    if let override = ProcessInfo.processInfo.environment["OPENXR_INCLUDE_DIR"] { return override }
+    let candidate = Context.packageDirectory + "/third_party/openxr-sdk/include"
+    return FileManager.default.fileExists(atPath: candidate + "/openxr/openxr.h") ? candidate : nil
+}
 
 var targets: [Target] = [
     .target(
@@ -31,15 +43,58 @@ var serverExclude: [String] = []
 var serverSwiftSettings: [SwiftSetting] = []
 
 if directEnabled {
+    guard let openxrIncludeDir = detectOpenXRIncludeDir() else {
+        fatalError("""
+            Direct build detected (.build/newt-package exists) but no OpenXR \
+            headers were found at third_party/openxr-sdk/include (run \
+            build-monado.sh to fetch them) and OPENXR_INCLUDE_DIR isn't set \
+            either. Point it at the OpenXR SDK's include/ directory, then \
+            re-run `swift build`.
+            """)
+    }
+    guard let vulkanSDK = detectVulkanSDK() else {
+        fatalError("""
+            Direct build detected (.build/newt-package exists) but no Vulkan \
+            SDK was found under ~/VulkanSDK and VULKAN_SDK isn't set either. \
+            Install the Vulkan SDK or point VULKAN_SDK at it, then re-run \
+            `swift build`.
+            """)
+    }
+    let newtPackageInclude = Context.packageDirectory + "/.build/newt-package/include"
     targets.append(.target(
         name: "Newt",
         path: "NewtBridge",
         sources: ["Bridge.c"],
-        publicHeadersPath: "include",
+        publicHeadersPath: "include"
+    ))
+    targets.append(.target(
+        name: "NewtDashboard",
+        dependencies: ["Newt"],
+        path: "Sources/NewtDashboard",
+        publicHeadersPath: ".",
+        cSettings: [
+            .unsafeFlags([
+                "-fobjc-arc",
+                "-DXR_USE_GRAPHICS_API_VULKAN",
+                "-I" + newtPackageInclude,
+                "-I" + Context.packageDirectory + "/.build/newt-package",
+                "-I" + openxrIncludeDir,
+                "-I" + vulkanSDK + "/include"
+            ])
+        ],
+        cxxSettings: [
+            .unsafeFlags([
+                "-DXR_USE_GRAPHICS_API_VULKAN",
+                "-I" + newtPackageInclude,
+                "-I" + Context.packageDirectory + "/.build/newt-package",
+                "-I" + openxrIncludeDir,
+                "-I" + vulkanSDK + "/include"
+            ])
+        ],
         linkerSettings: [
             .unsafeFlags([
                 "-L" + Context.packageDirectory + "/.build/newt-package/lib",
-                "-lnewt_dashboard", "-lnewt_core",
+                "-lnewt_core",
                 "-L" + xrVendorLibDir,
                 "-lopenxr_loader",
                 "-lvulkan.1",
@@ -58,17 +113,9 @@ if directEnabled {
         ]
     ))
     serverDependencies.append("Newt")
+    serverDependencies.append("NewtDashboard")
     serverSwiftSettings.append(.define("PIPPINVR_DIRECT"))
-} else {
-    serverExclude = [
-        "DirectHostRequests.swift",
-        "DirectMonadoSession.swift",
-        "DirectStatusItem.swift",
-        "DirectSettingsView.swift",
-        "NewtManagerClient.swift"
-    ]
 }
-
 targets.append(.executableTarget(
     name: "pippinvr-server",
     dependencies: serverDependencies,
@@ -82,5 +129,6 @@ let package = Package(
     platforms: [
         .macOS(.v14)
     ],
-    targets: targets
+    targets: targets,
+    cxxLanguageStandard: .cxx17
 )

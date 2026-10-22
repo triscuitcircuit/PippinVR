@@ -193,7 +193,7 @@ nonisolated(unsafe) var signalSources: [DispatchSourceSignal] = []
     if let directSession = activeDirectSession {
         Task.detached {
             await directSession.stopAndWait()
-            exit(exitCode)
+            DispatchQueue.main.async { exit(exitCode) }
         }
         return
     }
@@ -202,7 +202,7 @@ nonisolated(unsafe) var signalSources: [DispatchSourceSignal] = []
     session?.requestStop()
     Task {
         await session?.shutdown()
-        exit(exitCode)
+        DispatchQueue.main.async { exit(exitCode) }
     }
 }
 
@@ -276,11 +276,6 @@ Task { @MainActor in
     }
 
     if wantMenuBar || wantDockIcon, case .tcp = options.sink, USBLinkSpeed.detectQuestLinkSpeed() == nil {
-        // Mirrors the CLI's own "no client connected" warning (see
-        // PipelineSession.runWaitingLoop / the --eager-displays notice in
-        // run()) -- but checks for the headset itself over USB, rather than
-        // waiting for a stream client, so it fires immediately on launch
-        // instead of only after a timeout.
         showModalWarning(
             title: "No Headset Detected",
             message: "No Meta Quest was found connected over USB.\n\n" +

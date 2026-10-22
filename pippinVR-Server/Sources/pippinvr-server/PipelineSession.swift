@@ -211,11 +211,6 @@ final class PipelineSession: @unchecked Sendable {
         }
     }
 
-    /// Display IDs that should keep whatever mirror relationship macOS gave
-    /// them by default, instead of having it forced off like every other
-    /// display. Currently just "pippinvr-main" -- named for exactly this
-    /// purpose, showing the real screen, unlike the independent extended
-    /// -desktop panels ("Left"/"Right") that should stay unmirrored.
     private func displayIDsPreservingMirror(_ pipelines: [DisplayPipeline]) -> Set<CGDirectDisplayID> {
         Set(pipelines.compactMap { $0.entry.name == "pippinvr-main" ? $0.display?.displayID : nil })
     }

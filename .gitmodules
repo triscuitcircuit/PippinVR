@@ -1,0 +1,6 @@
+[submodule "Newt"]
+	path = Newt
+	url = https://github.com/triscuitcircuit/Newt.git
+[submodule "pippinVR-Server/third_party/monado-ql"]
+	path = pippinVR-Server/third_party/monado-ql
+	url = https://github.com/triscuitcircuit/Monando_MacOS_Fork.git

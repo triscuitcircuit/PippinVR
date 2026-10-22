@@ -155,6 +155,20 @@ final class VirtualDisplay {
 
     func dispose() {}
 
+    // displayID above is cached once at creation. If CGVirtualDisplay's
+    // window-server-assigned ID is ever reassigned later (observed as an
+    // existing display silently adopting a newer one's traits after it's
+    // added), the cached value goes stale while this stays live -- comparing
+    // the two is how we'd prove/disprove that theory without being able to
+    // click through the headset UI directly.
+    var liveDisplayID: CGDirectDisplayID {
+        let idSel = NSSelectorFromString("displayID")
+        guard display.responds(to: idSel) else { return 0 }
+        typealias GetID = @convention(c) (AnyObject, Selector) -> UInt32
+        let idImp = display.method(for: idSel)!
+        return unsafeBitCast(idImp, to: GetID.self)(display, idSel)
+    }
+
     // MARK: Diagnostic functions
     
     private static func logActiveDisplays() {

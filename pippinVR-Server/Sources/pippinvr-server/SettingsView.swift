@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, screens, quality, apps, cameras, device, appearance, transport
+    case general, screens, quality, apps, cameras, device, appearance, transport, environment
 
     var id: String { rawValue }
 
@@ -17,6 +17,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .device: return "Device"
         case .appearance: return "Appearance"
         case .transport: return "Transport"
+        case .environment: return "Environment"
         }
     }
 
@@ -30,6 +31,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .device: return "visionpro"
         case .appearance: return "paintpalette"
         case .transport: return "cable.connector"
+        case .environment: return "globe"
         }
     }
 }
@@ -42,19 +44,8 @@ private let tintOptions: [Color] = [
     Color(red: 0.19, green: 0.82, blue: 0.35)   // green
 ]
 
-/// One settings window for both transports. Exactly one of `questSession`/
-/// `directController` is non-nil in a given process (the launch mode is
-/// fixed for the process lifetime), but every tab is always shown: the
-/// inactive transport's controls render disabled with a note on how to
-/// switch, instead of disappearing, so switching between APK and Direct USB
-/// doesn't change what the Settings window looks like.
 struct SettingsView: View {
     var questSession: PipelineSession?
-    // Not @ObservedObject: SwiftUI doesn't support that on an Optional type.
-    // Exactly one of questSession/directController is non-nil for the whole
-    // process lifetime, so this never needs to swap at runtime -- the
-    // refreshTimer below forces re-evaluation often enough to pick up the
-    // controller's own @Published changes (apps, settingsMenu, running, ...).
     var directController: DirectStatusItemController?
     var onQuit: (() -> Void)?
     @State private var tick = false
@@ -108,6 +99,7 @@ struct SettingsView: View {
                         case .device: devicePanel
                         case .appearance: appearancePanel
                         case .transport: transportPanel
+                        case .environment: environmentPanel
                         }
                     }
                     .padding(.horizontal, 30)
@@ -127,8 +119,6 @@ struct SettingsView: View {
                 usbLinkSpeed = USBLinkSpeed.detectQuestLinkSpeed()
             }
             deviceInfo = USBLinkSpeed.connectedDevices()
-            // directController is a plain reference (see its declaration) --
-            // this flip just forces body to re-read its @Published fields.
             tick.toggle()
         }
         .alert("Direct USB needs Newt", isPresented: $showDirectUSBPrompt) {
@@ -136,10 +126,8 @@ struct SettingsView: View {
             Button("Switch to Direct USB") { switchToDirectUSB() }
         } message: {
             Text("Direct USB connects over a USB cable with no sideloaded APK required, but it "
-                + "talks to a separate component called Newt instead of this app's built-in TCP "
-                + "transport. If Newt isn't installed/built yet, the connection will fail with a "
-                + "\"newtd not found\" error — see docs/DIRECT-USB.md (`make build-newt`) first if "
-                + "you haven't set that up. PippinVR will quit this window and relaunch in Direct "
+                + "talks to Newt instead of this app's built-in TCP "
+                + "transport. PippinVR will quit this window and relaunch in Direct "
                 + "USB mode.")
         }
     }
@@ -264,7 +252,7 @@ struct SettingsView: View {
             if questSession != nil {
                 SettingsGroup {
                     SettingRow("Switch to Direct USB",
-                        help: "No sideloaded APK required, but needs the separate Newt component built and installed.",
+                        help: "No sideloaded APK required, but requires Newt",
                         showsDivider: false) {
                         Button("Switch…") { showDirectUSBPrompt = true }
                     }
@@ -279,9 +267,67 @@ struct SettingsView: View {
                 }
             }
 
-            Text("Switching relaunches PippinVR in the other mode; this window closes automatically.")
+            Text("Switching relaunches PippinVR in the other mode and this window closes automatically.")
                 .font(.caption)
                 .foregroundColor(.secondary)
+        }
+    }
+
+    // MARK: Environment
+
+    private var environmentPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let directController {
+                SettingsGroup {
+                    SettingRow("360° panorama", showsDivider: directController.environmentImageURL != nil) {
+                        Button(directController.environmentImageURL == nil ? "Choose…" : "Change…") {
+                            directController.chooseEnvironmentImage(); tick.toggle()
+                        }
+                    }
+                    if directController.environmentImageURL != nil {
+                        SettingRow("Flip vertically", showsDivider: true) {
+                            Toggle("", isOn: Binding(
+                                get: { directController.environmentFlippedVertically },
+                                set: { _ in directController.toggleEnvironmentFlipVertical(); tick.toggle() }
+                            )).labelsHidden()
+                        }
+                        SettingRow("Flip horizontally", showsDivider: true) {
+                            Toggle("", isOn: Binding(
+                                get: { directController.environmentFlippedHorizontally },
+                                set: { _ in directController.toggleEnvironmentFlipHorizontal(); tick.toggle() }
+                            )).labelsHidden()
+                        }
+                        SettingRow("Clear", showsDivider: false) {
+                            Button("Remove") { directController.clearEnvironmentImage(); tick.toggle() }
+                        }
+                    }
+                }
+
+                if let url = directController.environmentImageURL, let nsImage = NSImage(contentsOf: url) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Preview").font(.caption).foregroundColor(.secondary)
+                        Image(nsImage: nsImage)
+                            .resizable().scaledToFit()
+                            .scaleEffect(
+                                x: directController.environmentFlippedHorizontally ? -1 : 1,
+                                y: directController.environmentFlippedVertically ? -1 : 1
+                            )
+                            .frame(maxWidth: 420, maxHeight: 210)
+                            .clipped()
+                            .background(Color.black.opacity(0.2))
+                            .cornerRadius(6)
+                        Text("Approximates the flip — the real wraparound only renders in VR.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Text("Replaces the headset dashboard's own background while a panorama is set.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                inactiveModeNote("Direct USB", "lets you set a 360° panoramic background image")
+            }
         }
     }
 
@@ -334,13 +380,13 @@ struct SettingsView: View {
             if let questSession {
                 questScreens(questSession)
                 if directController == nil {
-                    inactiveModeNote("Direct USB", "adds screens from the headset's dock menu — Add Screen, Add Camera Feed, Add Video/Media Feed — up to 6 panels, each independently positioned and resized in VR.")
+                    inactiveModeNote("Direct USB", "adds screens from the headset's dock menu up to 6 panels, each independently positioned and resized in VR.")
                 }
             }
             if let directController {
                 directScreens(directController)
                 if questSession == nil {
-                    inactiveModeNote("Quest Client (APK)", "manages virtual displays as a list here in Settings: add, edit resolution/refresh/HiDPI, or remove, while streaming.")
+                    inactiveModeNote("Quest Client (APK)", "manages virtual displays as a list here in Settings")
                 }
             }
         }
@@ -425,10 +471,23 @@ struct SettingsView: View {
         HStack {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Add another screen").font(.headline)
-                Text("Create an independent 1920 × 1200 Mac desktop in your headset.")
+                Text("Create an independent Mac desktop in your headset with a specified size")
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            TextField("Width", value: Binding(
+                get: { controller.nextScreenWidth },
+                set: { controller.nextScreenWidth = $0; tick.toggle() }
+            ), format: .number)
+                .frame(width: 70)
+                .multilineTextAlignment(.trailing)
+            Text("×").foregroundStyle(.secondary)
+            TextField("Height", value: Binding(
+                get: { controller.nextScreenHeight },
+                set: { controller.nextScreenHeight = $0; tick.toggle() }
+            ), format: .number)
+                .frame(width: 70)
+                .multilineTextAlignment(.trailing)
             directControl(controller, "Add Screen", prominent: true)
         }
         Text(controller.running ? "\(controller.panelCount) of 6 panels in this session" : "Connect USB Direct from the menu bar to add screens and feeds.")
@@ -462,7 +521,7 @@ struct SettingsView: View {
             if let directController {
                 directQuality(controller: directController)
                 if questSession == nil {
-                    inactiveModeNote("Quest Client (APK)", "offers Port/Codec/Bitrate/FPS and a live wire-speed gauge with a speed test.")
+                    inactiveModeNote("Quest Client (APK)", "live wire-speed gauge with a speed test.")
                 }
             }
         }
@@ -521,7 +580,7 @@ struct SettingsView: View {
                 Text("3D apps on the headset's Apps page")
                 .font(.system(size: 13, weight: .semibold))
                 if directController.apps.isEmpty {
-                    Text("No apps configured yet. Add a native OpenXR app (.app or executable) or a Godot project folder below — once added, they appear directly on the in-headset Apps page instead of needing Launch 3D App… each time.")
+                    Text("No apps configured yet. Add a native OpenXR app (.app or executable) or a Godot project folder below")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(Array(directController.apps.enumerated()), id: \.offset) { index, entry in
@@ -609,7 +668,7 @@ struct SettingsView: View {
                 LabeledContent("Mode", value: questSession != nil ? "Quest Client (APK)" : "Direct USB")
             }
             if deviceInfo.isEmpty {
-                Text("No Meta headset detected over USB. Connect your headset with a data cable to see its information.")
+                Text("No Meta headset detected over USB.")
                     .foregroundStyle(.secondary)
             }
             ForEach(deviceInfo) { device in
@@ -625,7 +684,7 @@ struct SettingsView: View {
                 }
                 .textSelection(.enabled)
             }
-            Text("Information is reported by USB and refreshes automatically, regardless of which transport is active. Product names may be generic; USB speed is the negotiated link speed, not measured streaming throughput.")
+            Text("Information is reported by USB and refreshes automatically, regardless of which transport is active.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -1050,8 +1109,6 @@ struct CaptureDeviceRow: View {
     }
 }
 
-/// A local title draft so typing doesn't save/validate on every keystroke --
-/// only Enter (onSubmit) commits a rename.
 private struct AppRow: View {
     let entry: AppEntry
     let onRename: (String) -> Void

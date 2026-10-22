@@ -7,19 +7,18 @@ build: build-server-app build-client
 build-server:
 	@cd pippinVR-Server && swift build -c release
 
-# Optional: build the separate Newt project so Direct USB compiles in.
-# Needs a Newt checkout (../Newt or NEWT_SOURCE_DIR) + OpenXR/Vulkan SDKs.
+
 build-newt:
-	@cd pippinVR-Server && ./build-newt.sh
+	@cd pippinVR-Server && ./build_scripts/build-newt.sh
 
 build-server-app:
-	@cd pippinVR-Server && ./build-app.sh release
+	@cd pippinVR-Server && ./build_scripts/build-app.sh release
 
 build-dmg:
-	@cd pippinVR-Server && UNIVERSAL=1 ./build-app.sh release && ./package-dmg.sh
+	@cd pippinVR-Server && UNIVERSAL=1 ./build_scripts/build-app.sh release && ./build_scripts/package-dmg.sh
 
 dmg-layout: build-server-app
-	@cd pippinVR-Server && ./make-dmg-layout.sh
+	@cd pippinVR-Server && ./build_scripts/make-dmg-layout.sh
 
 build-client:
 	@echo "Building PippinVR Client as debug"

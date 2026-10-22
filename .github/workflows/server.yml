@@ -127,7 +127,7 @@ jobs:
           CODESIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
           VERSION: ${{ steps.version.outputs.value }}
           UNIVERSAL: '1'
-        run: ./build-app.sh release
+        run: ./build_scripts/build-app.sh release
 
       - name: Package Installer
         working-directory: pippinVR-Server
@@ -137,7 +137,7 @@ jobs:
           APPLE_API_KEY_PATH: ${{ steps.notary.outputs.path }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-        run: ./package-dmg.sh
+        run: ./build_scripts/package-dmg.sh
 
       - name: Remove certificates
         if: always()

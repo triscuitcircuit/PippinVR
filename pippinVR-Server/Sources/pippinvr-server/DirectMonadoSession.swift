@@ -1,5 +1,7 @@
 import Foundation
+#if PIPPINVR_DIRECT
 import Newt
+#endif
 
 enum DirectMonadoError: Error, CustomStringConvertible {
     case missingClient
@@ -43,11 +45,13 @@ final class DirectMonadoSession: @unchecked Sendable {
 
     func takeHostRequests() -> [Int] {
         var requests = lock.withLock { let pending = hostRequests; hostRequests.removeAll(); return pending }
+        #if PIPPINVR_DIRECT
         while true {
             let request = Int(Newt_PollHostRequest())
             if request == 0 { break }
             requests.append(request)
         }
+        #endif
         return requests
     }
 
@@ -62,6 +66,7 @@ final class DirectMonadoSession: @unchecked Sendable {
     private let inheritedEnvironment = ProcessInfo.processInfo.environment
 
     private static let installLogBridge: Void = {
+        #if PIPPINVR_DIRECT
         Newt_SetLogHandler({ _, level, message in
             guard let message else { return }
             let text = "[Newt] \(String(cString: message))"
@@ -72,6 +77,7 @@ final class DirectMonadoSession: @unchecked Sendable {
             default: Logger.info(text)
             }
         }, nil)
+        #endif
     }()
 
     init(configPath: String? = nil) {
@@ -103,7 +109,6 @@ final class DirectMonadoSession: @unchecked Sendable {
         ] where inheritedEnvironment[variable] == nil {
             environment[variable] = String(value)
         }
-        // Keep Pippin preference/config names stable; translate at the Newt boundary.
         for suffix in ["CAPTURE_FPS", "PANEL_WIDTH", "RAY_IDLE_SECONDS", "RAY_WAKE_METERS", "RAY_WAKE_DEGREES", "VIDEO_PATH"] {
             let key = "NEWT_" + suffix
             if environment[key] == nil { environment[key] = environment["PIPPINVR_" + suffix] }
@@ -375,6 +380,7 @@ final class DirectMonadoSession: @unchecked Sendable {
 
         if application != nil { throw DirectMonadoError.missingRuntimeManifest }
 
+        #if PIPPINVR_DIRECT
         Logger.info("Direct USB: running Newt_Run() in-process")
         lock.withLock { inProcessRunning = true }
 
@@ -391,6 +397,11 @@ final class DirectMonadoSession: @unchecked Sendable {
         let status = Newt_Run()
 
         lock.withLock { inProcessRunning = false }
+        #else
+        _ = resolvedEnvironment
+        let status: Int32 = -1
+        Logger.error("Direct USB: built without PIPPINVR_DIRECT; in-process Newt_Run() is unavailable")
+        #endif
 
         if status != 0 {
             throw DirectMonadoError.clientExited(status)
@@ -409,7 +420,11 @@ final class DirectMonadoSession: @unchecked Sendable {
                 do { _ = try await managerClient.command(command) } catch { Logger.warning("Direct USB command failed: \(error)") }
             }
         } else {
+            #if PIPPINVR_DIRECT
             command.withCString { Newt_Command($0) }
+            #else
+            Logger.warning("Direct USB command dropped: built without PIPPINVR_DIRECT")
+            #endif
         }
     }
 
@@ -450,7 +465,9 @@ final class DirectMonadoSession: @unchecked Sendable {
         }
         if runningInProcess {
             Logger.warning("Direct USB: stopping in-process Newt session")
+            #if PIPPINVR_DIRECT
             "stop".withCString { Newt_Command($0) }
+            #endif
         }
         if managed {
             Logger.warning("Direct USB: stopping Newt-managed session")
