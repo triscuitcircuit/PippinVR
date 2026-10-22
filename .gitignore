@@ -22,3 +22,7 @@
 *.certSigningRequest
 *.mobileprovision
 AuthKey_*.p8
+
+MERGE-STAGING.md
+/pippinVR-Server/NewtBridge/README.md
+/pippinVR-Server/docs/
