@@ -156,7 +156,6 @@ jobs:
         env:
           CODESIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
           VERSION: ${{ steps.version.outputs.value }}
-          UNIVERSAL: '1'
         run: ./build_scripts/build-app.sh release
 
       - name: Package Installer

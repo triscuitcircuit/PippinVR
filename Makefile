@@ -15,7 +15,7 @@ build-server-app:
 	@cd pippinVR-Server && ./build_scripts/build-app.sh release
 
 build-dmg:
-	@cd pippinVR-Server && UNIVERSAL=1 ./build_scripts/build-app.sh release && ./build_scripts/package-dmg.sh
+	@cd pippinVR-Server && ./build_scripts/build-app.sh release && ./build_scripts/package-dmg.sh
 
 dmg-layout: build-server-app
 	@cd pippinVR-Server && ./build_scripts/make-dmg-layout.sh
