@@ -51,6 +51,9 @@ final class StatusItemController {
 
         let streaming = session.isStreaming
         let connected = session.clientConnected
+        let headsetPresent = USBLinkSpeed.detectQuestLinkSpeed() != nil
+
+        statusItem.button?.setStatusDot(streaming && connected ? .systemGreen : headsetPresent ? .systemYellow : .systemRed)
 
         let menu = NSMenu()
 
@@ -103,6 +106,13 @@ final class StatusItemController {
         resetItem.isEnabled = streaming
         menu.addItem(resetItem)
 
+        #if PIPPINVR_DIRECT
+        let direct = NSMenuItem(title: "Switch to Direct USB (QuestLink)",
+                                action: #selector(connectDirect), keyEquivalent: "")
+        direct.target = self
+        menu.addItem(direct)
+        #endif
+
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "Quit PippinVr",
@@ -118,9 +128,30 @@ final class StatusItemController {
         }
     }
 
+    #if PIPPINVR_DIRECT
+    @objc private func connectDirect() {
+        guard let executable = Bundle.main.executableURL else { return }
+        let child = Process()
+        child.executableURL = executable
+        child.arguments = ["--direct-usb", "--gui", "--connect-direct"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["PIPPINVR_WAIT_FOR_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        child.environment = environment
+        do {
+            try child.run()
+            onQuit()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not start USB Direct"
+            alert.informativeText = String(describing: error)
+            alert.runModal()
+        }
+    }
+    #endif
+
     @objc private func showConfigWindow() {
         if settingsViewController == nil {
-            let contentView = SettingsView(session: session)
+            let contentView = SettingsView(questSession: session, directController: nil, onQuit: onQuit)
 
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),

@@ -1,0 +1,5 @@
+module Newt {
+    header "Newt.h"
+    header "NewtLog.h"
+    export *
+}

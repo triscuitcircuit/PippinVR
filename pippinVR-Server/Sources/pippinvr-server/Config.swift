@@ -139,7 +139,88 @@ struct DisplayEntry: Codable {
 
 // MARK: Server Configuration
 
+/// How the Mac reaches the headset on launch.
+///
+/// `directMonado` uses the bundled Monado OpenXR runtime and its Quest Link
+/// driver over libusb. It talks to Meta's built-in streaming client, so it
+/// needs neither ADB nor a sideloaded Pippin client. `questClient` keeps the
+/// original standalone-client transport (TCP, optionally via `adb reverse`).
+enum ConnectionTransport: String, Codable {
+    case directMonado
+    case questClient
+}
+
+/// Direct headset timing is separate from APK capture FPS and desktop refresh.
+struct DirectUSBConfig: Codable {
+    var refreshHz: Int?
+    var rayIdleSeconds: Double?
+    var rayWakeDistanceMeters: Double?
+    var rayWakeAngleDegrees: Double?
+
+    func validate() throws {
+        func require(_ valid: Bool, _ message: String) throws {
+            if !valid { throw NSError(domain: "PippinVR.DirectUSB", code: 1,
+                                      userInfo: [NSLocalizedDescriptionKey: message]) }
+        }
+        if let value = refreshHz {
+            try require([0, 72, 80, 90, 120].contains(value), "directUSB.refreshHz must be 0 (Auto), 72, 80, 90, or 120.")
+        }
+        if let value = rayIdleSeconds {
+            try require(value.isFinite && (0...60).contains(value), "directUSB.rayIdleSeconds must be between 0 (always visible) and 60.")
+        }
+        if let value = rayWakeDistanceMeters {
+            try require(value.isFinite && (0.001...0.5).contains(value), "directUSB.rayWakeDistanceMeters must be between 0.001 and 0.5.")
+        }
+        if let value = rayWakeAngleDegrees {
+            try require(value.isFinite && (0.1...90).contains(value), "directUSB.rayWakeAngleDegrees must be between 0.1 and 90.")
+        }
+    }
+}
+
+/// An entry on the dashboard's Apps page -- exactly one of `game` (an
+/// exported executable/.app) or `project` (a Godot project directory).
+/// Mirrors `newt.py`'s `app_entry()` validation so the manager's `configure`
+/// and Pippin's own config agree on what a valid app looks like.
+struct AppEntry: Codable {
+    var title: String = ""
+    var game: String?
+    var project: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title, game, project
+    }
+
+    init(title: String = "", game: String? = nil, project: String? = nil) {
+        self.title = title
+        self.game = game
+        self.project = project
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        if let v = try c.decodeIfPresent(String.self, forKey: .title) {
+            title = v
+        }
+        game = try c.decodeIfPresent(String.self, forKey: .game)
+        project = try c.decodeIfPresent(String.self, forKey: .project)
+    }
+
+    func validate() throws {
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ConfigError.appMissingTitle
+        }
+        guard (game != nil) != (project != nil) else {
+            throw ConfigError.appNeedsOneTarget(title)
+        }
+    }
+}
+
 struct ServerConfig: Codable {
+    // Defaults to the Quest client so existing installs launch exactly as
+    // before; Direct USB is opt-in via config, --direct-usb, or the menu bar.
+    var transport: ConnectionTransport = .questClient
+    var directUSB: DirectUSBConfig?
     var port: UInt16 = 9943
     var codec: CodecType = .hevc
     var bitrateMbps: Int = 40
@@ -147,9 +228,10 @@ struct ServerConfig: Codable {
     var keyframeIntervalFrames: Int?
     var durationSeconds: Double = 0
     var displays: [DisplayEntry] = [DisplayEntry(name: "pippinvr-main")]
+    var apps: [AppEntry] = []
 
     enum CodingKeys: String, CodingKey {
-        case port, codec, bitrateMbps, fps, keyframeIntervalFrames, durationSeconds, displays
+        case directUSB, transport, port, codec, bitrateMbps, fps, keyframeIntervalFrames, durationSeconds, displays, apps
     }
 
     init() {}
@@ -157,6 +239,9 @@ struct ServerConfig: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init()
+        if let v = try c.decodeIfPresent(ConnectionTransport.self, forKey: .transport) {
+            transport = v
+        }
         if let v = try c.decodeIfPresent(UInt16.self, forKey: .port) {
             port = v
         }
@@ -169,12 +254,17 @@ struct ServerConfig: Codable {
         if let v = try c.decodeIfPresent(Int.self, forKey: .fps) {
             fps = v
         }
+        directUSB = try c.decodeIfPresent(DirectUSBConfig.self, forKey: .directUSB)
+        try directUSB?.validate()
         keyframeIntervalFrames = try c.decodeIfPresent(Int.self, forKey: .keyframeIntervalFrames)
         if let v = try c.decodeIfPresent(Double.self, forKey: .durationSeconds) {
             durationSeconds = v
         }
         if let v = try c.decodeIfPresent([DisplayEntry].self, forKey: .displays), !v.isEmpty {
             displays = v
+        }
+        if let v = try c.decodeIfPresent([AppEntry].self, forKey: .apps) {
+            apps = v
         }
     }
 
@@ -215,6 +305,9 @@ struct ServerConfig: Codable {
                 return (config, configPath)
             } catch {
                 FileHandle.standardError.write(Data("warning: failed to load \(configPath): \(error)\n".utf8))
+                // Preserve the user's invalid file for correction. Direct USB re-reads
+                // it before connecting and reports the error rather than starting.
+                return (ServerConfig(), configPath)
             }
         }
 
@@ -304,6 +397,9 @@ struct ServerConfig: Codable {
                 throw ConfigError.badRefresh(d.name, d.refreshHz)
             }
         }
+        for app in apps {
+            try app.validate()
+        }
     }
 }
 
@@ -312,6 +408,8 @@ enum ConfigError: Error, CustomStringConvertible {
     case badDimensions(String, Int, Int)
     case oddDimensions(String, Int, Int)
     case badRefresh(String, Double)
+    case appMissingTitle
+    case appNeedsOneTarget(String)
 
     var description: String {
         switch self {
@@ -323,6 +421,10 @@ enum ConfigError: Error, CustomStringConvertible {
             "display '\(n)': dimensions \(w)x\(h) must be even (chroma subsampling)"
         case let .badRefresh(n, hz):
             "display '\(n)': invalid refresh rate \(hz)"
+        case .appMissingTitle:
+            "app entry needs a title"
+        case let .appNeedsOneTarget(title):
+            "app '\(title)': needs exactly one of game or project"
         }
     }
 }

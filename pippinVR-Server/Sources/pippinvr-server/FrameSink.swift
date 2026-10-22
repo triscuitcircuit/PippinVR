@@ -12,6 +12,10 @@ protocol FrameSink: AnyObject {
     var onClientDisconnected: (@Sendable () -> Void)? { get set }
 
     var hasClient: Bool { get }
+
+    var currentThroughputMbps: Double { get }
+
+    var droppedFrameCount: Int { get }
 }
 
 // MARK: File verification with sink
@@ -26,6 +30,9 @@ final class FileFrameSink: FrameSink {
     var hasClient: Bool {
         true
     }
+
+    var currentThroughputMbps: Double { 0 }
+    var droppedFrameCount: Int { 0 }
 
     init(path: String) {
         basePath = path
@@ -92,6 +99,14 @@ final class TCPFrameSink: FrameSink, @unchecked Sendable {
     private var _inFlight = 0
     private var _dropped = 0
 
+    // Rolling throughput measurement: bytes accumulated in the current ~1s
+    // window, closed out and converted to Mbps whenever send() notices the
+    // window has elapsed.
+    private var _windowStart = DispatchTime.now()
+    private var _windowBytes = 0
+    private var _throughputMbps: Double = 0
+    private var _lastSendTime = DispatchTime.now()
+
     var onClientConnected: (@Sendable () -> Void)?
     var onClientDisconnected: (@Sendable () -> Void)?
 
@@ -99,6 +114,31 @@ final class TCPFrameSink: FrameSink, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return _connection != nil
+    }
+
+    var currentThroughputMbps: Double {
+        lock.lock()
+        defer { lock.unlock() }
+        let idleFor = Double(DispatchTime.now().uptimeNanoseconds - _lastSendTime.uptimeNanoseconds) / 1_000_000_000
+        return idleFor > 2.0 ? 0 : _throughputMbps
+    }
+
+    var droppedFrameCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _dropped
+    }
+
+    private func recordBytesSentLocked(_ n: Int) {
+        let now = DispatchTime.now()
+        _lastSendTime = now
+        _windowBytes += n
+        let elapsed = Double(now.uptimeNanoseconds - _windowStart.uptimeNanoseconds) / 1_000_000_000
+        if elapsed >= 1.0 {
+            _throughputMbps = Double(_windowBytes) * 8 / elapsed / 1_000_000
+            _windowBytes = 0
+            _windowStart = now
+        }
     }
 
     init(port: UInt16) throws {
@@ -124,6 +164,9 @@ final class TCPFrameSink: FrameSink, @unchecked Sendable {
             _awaitingKeyframe = Set(_streams.map(\.id))
             _inFlight = 0
             _dropped = 0
+            _windowBytes = 0
+            _windowStart = .now()
+            _throughputMbps = 0
             let header = WireFormat.sessionHeader(_streams)
             let count = _streams.count
             lock.unlock()
@@ -183,6 +226,7 @@ final class TCPFrameSink: FrameSink, @unchecked Sendable {
 
         let packet = WireFormat.framePacket(streamID: streamID, frame: frame)
         _inFlight += packet.count
+        recordBytesSentLocked(packet.count)
         lock.unlock()
 
         conn.send(content: packet, completion: .contentProcessed { [weak self] _ in

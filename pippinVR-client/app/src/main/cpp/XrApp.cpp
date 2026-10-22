@@ -392,6 +392,16 @@ void XrApp::onFrame(FramePacket&& packet) {
     }
 }
 
+void XrApp::onSettings(bool smoothingEnabled) {
+    smoothingEnabled_.store(smoothingEnabled, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(decodersMutex_);
+    for (auto& decoder : decoders_) {
+        decoder->setSmoothingEnabled(smoothingEnabled);
+    }
+    LOGI("smoothing mode: %s (%zu decoder(s) updated)", smoothingEnabled ? "on" : "off",
+         decoders_.size());
+}
+
 int64_t XrApp::chooseSwapchainFormat() const {
     uint32_t count = 0;
     if (XR_FAILED(xrEnumerateSwapchainFormats(session_, 0, &count, nullptr)) || count == 0) {
@@ -791,6 +801,7 @@ bool XrApp::buildPanels() {
             LOGE("decoder init failed for stream ID=%u", info.id);
             continue;
         }
+        decoder->setSmoothingEnabled(smoothingEnabled_.load(std::memory_order_relaxed));
 
         Panel panel;
         panel.streamId = info.id;

@@ -124,36 +124,50 @@ final class VirtualDisplay {
             Logger.debug("Configured display \(displayID) to disable mirroring")
             return true
         } else {
-            Logger.warning("Failed to configure mirroring disable for display \(displayID) (error: \(result.rawValue))")
+            Logger.debug("Failed to configure mirroring disable for display \(displayID) (error: \(result.rawValue))")
             return false
         }
     }
-    
+
     private func logDisplayDiagnostics() {
         let isMirrored = CGDisplayIsInMirrorSet(displayID) != 0
         let mirrorPrimary = CGDisplayMirrorsDisplay(displayID)
-        
+
         let bounds = CGDisplayBounds(displayID)
-        
+
         let isMain = CGDisplayIsMain(displayID) != 0
-        
+
         let isActive = CGDisplayIsActive(displayID) != 0
         Logger.info("""
                     VirtualDisplay created: ID=\(displayID), size=\(width)x\(height)
                             bounds=\(bounds), isMain=\(isMain), isActive=\(isActive)
                             isMirrored=\(isMirrored), mirrorPrimary=\(mirrorPrimary)
                     """)
-        
+
         if isMirrored {
-            Logger.warning("Display \(displayID) Mirrored")
+            Logger.debug("Display \(displayID) Mirrored")
         }
-        
+
         if mirrorPrimary != kCGNullDirectDisplay {
-            Logger.warning("Display \(displayID) is mirroring display \(mirrorPrimary)")
+            Logger.debug("Display \(displayID) is mirroring display \(mirrorPrimary)")
         }
     }
 
     func dispose() {}
+
+    // displayID above is cached once at creation. If CGVirtualDisplay's
+    // window-server-assigned ID is ever reassigned later (observed as an
+    // existing display silently adopting a newer one's traits after it's
+    // added), the cached value goes stale while this stays live -- comparing
+    // the two is how we'd prove/disprove that theory without being able to
+    // click through the headset UI directly.
+    var liveDisplayID: CGDirectDisplayID {
+        let idSel = NSSelectorFromString("displayID")
+        guard display.responds(to: idSel) else { return 0 }
+        typealias GetID = @convention(c) (AnyObject, Selector) -> UInt32
+        let idImp = display.method(for: idSel)!
+        return unsafeBitCast(idImp, to: GetID.self)(display, idSel)
+    }
 
     // MARK: Diagnostic functions
     

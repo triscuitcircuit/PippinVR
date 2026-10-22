@@ -2,17 +2,20 @@
 # Table of Contents
 
 1.  [PippinVR](#org7f16d57)
-2.  [About](#orgd98eb26)
-    1.  [Capabilities](#org99c01cb)
-3.  [Installation](#org7f6f53b)
-    1.  [Installation off Github](#org7925b9e)
-    2.  [Requirements for building from source](#org9639605)
-        1.  [Pippin-VR Server](#orgee35afe)
-        2.  [Pippin-VR Client](#org0ce0959)
-4.  [Design](#org9beed48)
-    1.  [Known Issues](#orgb948b55)
-5.  [Contributing](#org2dc1f56)
-6.  [License](#orgde0f8b8)
+2.  [About](#org0ce0959)
+    1.  [Capabilities](#orgee35afe)
+        1.  [USB Direct (QuestLink)](#org99c01cb)
+        2.  [APK USB](#orgd98eb26)
+        3.  [](#org7925b9e)
+3.  [Installation](#org2dc1f56)
+    1.  [Installation off Github](#org9639605)
+    2.  [Requirements for building from source](#org9beed48)
+        1.  [Pippin-VR Server](#org7f6f53b)
+        2.  [Pippin-VR Client](#orgb948b55)
+4.  [Design](#orgfa898cb)
+    1.  [Known Issues](#orgde0f8b8)
+5.  [Contributing](#org7161a33)
+6.  [License](#org194cf40)
 
 <div align="center">
 
@@ -30,7 +33,7 @@
 </div>
 
 
-<a id="orgd98eb26"></a>
+<a id="org0ce0959"></a>
 
 # About
 
@@ -43,11 +46,32 @@ This code is under the GPLv3 license as I feel strongly that any derivatives of 
 > "Given enough eyeballs, all bugs are shallow" - Eric S. Raymond (The Cathedral and the Bazaar)
 
 
-<a id="org99c01cb"></a>
+<a id="orgee35afe"></a>
 
 ## Capabilities
 
-So far `PippinVR` can cast multiple screens from a Mac into a virtual space. It also has the ability to overlay the screens in passthrough, or cycle through settings with "B" (top button on a Meta Quest controller). The screens can be moved with the controller and placed individually.
+`PippinVR` has two modes:
+
+-   Connecting via QuestLink USB
+-   APK connection
+
+
+<a id="org99c01cb"></a>
+
+### USB Direct (QuestLink)
+
+This mode connects without using an APK and calls the headsets Questlink over XRSP and uses Vulkan (MoltenVK) to render natively on the mac. It creates its own environmentto add screens and load OpenXR games (currently only works with Godot).
+
+Otherwise, works the same as the APK USB mode besides the fact that it does not have passthrough.
+
+To connect, trigger a USB connection in the task bar menu ("Connect USB") with a headset connected, and then go the connect prompt within the headset quick menu.
+
+
+<a id="orgd98eb26"></a>
+
+### APK USB
+
+`PippinVR` can cast multiple screens from a Mac into a virtual space. It also has the ability to overlay the screens in passthrough, or cycle through settings with "B" (top button on a Meta Quest controller). The screens can be moved with the controller and placed individually.
 
 Zooming in and out of the virtual screen space using forward in back with the controller sticks  is supported.
 
@@ -59,7 +83,7 @@ Dynamic framerate of each virtual screen conserves bandwidth using the wire.
 
 `PippinVR` supports as many displays as your system can handle. They can be configured and added by the settings menu. The only limit is finding your mouse in the screens.
 
-`PippinVR` also supports streaming of iOS or iPadOS screens as a virtual screen using USB.
+`PippinVR` also supports streaming of iOS or iPadOS screens as a virtual screen using APK USB. 
 
 <div align="center">
 
@@ -68,7 +92,12 @@ Dynamic framerate of each virtual screen conserves bandwidth using the wire.
 </div>
 
 
-<a id="org7f6f53b"></a>
+<a id="org7925b9e"></a>
+
+### 
+
+
+<a id="org2dc1f56"></a>
 
 # Installation
 
@@ -76,7 +105,7 @@ This respsitory contains both the `PippinVR-Server`, the server running on MacOS
 Because this code was created with wire transmission in mind, it makes use of Android Debug Bridge (adb) and SideQuest.
 
 
-<a id="org7925b9e"></a>
+<a id="org9639605"></a>
 
 ## Installation off Github
 
@@ -94,7 +123,7 @@ Make sure that `adb` is listening on the specifically bounded port for Pippin (a
     adb reverse tcp:9943 tcp:9943
 
 
-<a id="org9639605"></a>
+<a id="org9beed48"></a>
 
 ## Requirements for building from source
 
@@ -112,7 +141,7 @@ The following requirements are necessary for running `PippinVR`:
 -   MacOS (tested on MacOS 26.6)
 
 
-<a id="orgee35afe"></a>
+<a id="org7f6f53b"></a>
 
 ### Pippin-VR Server
 
@@ -140,7 +169,7 @@ It should compile and install the server application as a \`.app\`. The first ru
 Pippin-VR server has a settings menu that can be accessed from the menu bar. The settings menu allows changing the screen configurations while displaying to the headset. Displays can be added or removed, with instant refresh once the settings have been applied.
 
 
-<a id="org0ce0959"></a>
+<a id="orgb948b55"></a>
 
 ### Pippin-VR Client
 
@@ -154,7 +183,7 @@ To build and install the client on the headset, the following make command calls
 > Make sure a `local.properties` in `pippinVR-client` file contains \`sdk.dir\` and points to the android sdk. An example file called `local.properties.example` is provided.
 
 
-<a id="org9beed48"></a>
+<a id="orgfa898cb"></a>
 
 # Design
 
@@ -167,7 +196,7 @@ The server creates Virtual displays through the `CGVirtualDisplay`, sends it to 
 Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to `FrameSink`.
 
 
-<a id="orgb948b55"></a>
+<a id="orgde0f8b8"></a>
 
 ## Known Issues
 
@@ -176,7 +205,7 @@ Actor diagram for lifetimes of the client. Showcases the loop of frame encoding 
 -   Connected iPadOS and iOS devices are stuck with 1920x1080 landscape resolutions.
 
 
-<a id="org2dc1f56"></a>
+<a id="org7161a33"></a>
 
 # Contributing
 
@@ -187,7 +216,7 @@ Contributions are welcome and encouraged (as per the GNUv3 License). To contribu
 This project will take contributions in the form of pull-requests.
 
 
-<a id="orgde0f8b8"></a>
+<a id="org194cf40"></a>
 
 # License
 

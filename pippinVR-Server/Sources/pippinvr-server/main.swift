@@ -35,12 +35,13 @@ func requestCameraAccessEarly() {
     }
 }
 
-requestCameraAccessEarly()
-
 let usage = """
 pippinvr-server
 
   --config PATH        JSON config (see Config.swift for the schema)
+  --direct-usb         direct Quest Link via bundled Monado (no ADB and no
+                       sideloaded client APK); needs a Newt-enabled build
+  --quest-client       use the standalone Quest client/TCP transport (default)
   --tcp PORT           stream over TCP (use with `adb reverse` for USB)
   --file PATH          write elementary streams to disk instead
   --displays N         quick multi-display: N clones of the default display
@@ -84,6 +85,12 @@ func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool, dockIcon: 
 
     let (loadedConfig, configPath) = ServerConfig.loadOrCreate(path: value("--config"))
     var config = loadedConfig
+    if has("--direct-usb") {
+        config.transport = .directMonado
+    }
+    if has("--quest-client") || has("--adb-reverse") {
+        config.transport = .questClient
+    }
 
     if let c = value("--codec") {
         config.codec = (c.lowercased() == "h264") ? CodecType.h264 : CodecType.hevc
@@ -141,7 +148,7 @@ func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool, dockIcon: 
     if has("--eager-displays") {
         options.waitForClient = false
     } else if isGUIMode {
-        options.waitForClient = false
+        options.waitForClient = USBLinkSpeed.detectQuestLinkSpeed() == nil
     } else {
         options.waitForClient = true
     }
@@ -170,6 +177,9 @@ if printOnly {
 }
 
 nonisolated(unsafe) var activeSession: PipelineSession?
+#if PIPPINVR_DIRECT
+nonisolated(unsafe) var activeDirectSession: DirectMonadoSession?
+#endif
 nonisolated(unsafe) var shuttingDown = false
 nonisolated(unsafe) var signalSources: [DispatchSourceSignal] = []
 
@@ -179,11 +189,20 @@ nonisolated(unsafe) var signalSources: [DispatchSourceSignal] = []
     }
     shuttingDown = true
     FileHandle.standardError.write(Data("\n[pipeline] shutting down\n".utf8))
+    #if PIPPINVR_DIRECT
+    if let directSession = activeDirectSession {
+        Task.detached {
+            await directSession.stopAndWait()
+            DispatchQueue.main.async { exit(exitCode) }
+        }
+        return
+    }
+    #endif
     let session = activeSession
     session?.requestStop()
     Task {
         await session?.shutdown()
-        exit(exitCode)
+        DispatchQueue.main.async { exit(exitCode) }
     }
 }
 
@@ -199,6 +218,48 @@ func installSignalHandlers() {
 
 installSignalHandlers()
 
+#if PIPPINVR_DIRECT
+if options.config.transport == .directMonado {
+    if DirectMonadoSession.isAvailable {
+        let directSession = DirectMonadoSession(configPath: options.configPath)
+        activeDirectSession = directSession
+        if wantMenuBar || wantDockIcon {
+            let app = NSApplication.shared
+            app.setActivationPolicy(wantDockIcon ? .regular : .accessory)
+            MainMenu.install()
+            let directDelegate = DirectApplicationDelegate()
+            app.delegate = directDelegate
+            let directMenu = DirectStatusItemController(session: directSession)
+            directMenu.install()
+            if CommandLine.arguments.contains("--connect-direct") { directSession.connect() }
+            withExtendedLifetime((directMenu, directDelegate)) { app.run() }
+        } else {
+            Task.detached {
+                do { try await directSession.run(); exit(0) } catch {
+                    FileHandle.standardError.write(Data("fatal: \(error)\n".utf8))
+                    exit(1)
+                }
+            }
+            dispatchMain()
+        }
+        exit(0)
+    }
+    Logger.warning(
+        "Direct USB selected but the bundled Monado client is unavailable; " +
+        "falling back to the Quest client/TCP transport"
+    )
+}
+#else
+if options.config.transport == .directMonado {
+    Logger.warning(
+        "Direct USB selected but this build has no Newt support " +
+        "(run ./build-newt.sh, then rebuild); using the Quest client/TCP transport"
+    )
+}
+#endif
+
+requestCameraAccessEarly()
+
 let session = PipelineSession(options: options)
 activeSession = session
 
@@ -212,6 +273,18 @@ Task { @MainActor in
             beginShutdown(exitCode: 0)
         }
         statusController?.install()
+    }
+
+    if wantMenuBar || wantDockIcon, case .tcp = options.sink, USBLinkSpeed.detectQuestLinkSpeed() == nil {
+        showModalWarning(
+            title: "No Headset Detected",
+            message: "No Meta Quest was found connected over USB.\n\n" +
+                "PippinVR will still create its virtual display(s) and start listening on " +
+                "port \(options.config.port), but windows may migrate onto a display you " +
+                "can't see until a Quest is connected. Plug in the headset with a " +
+                "data-capable cable, approve data access in-headset if prompted, then check " +
+                "the menu bar item for connection status."
+        )
     }
 
     do {
