@@ -40,13 +40,14 @@ StreamClient::~StreamClient() {
 }
 
 void StreamClient::start(HeaderFn onHeader, FrameFn onFrame, ReconfigureFn onReconfigure,
-                         StatusFn onStatus) {
+                         StatusFn onStatus, SettingsFn onSettings) {
     if (running_.exchange(true))
         return;
     onHeader_ = std::move(onHeader);
     onFrame_ = std::move(onFrame);
     onReconfigure_ = std::move(onReconfigure);
     onStatus_ = std::move(onStatus);
+    onSettings_ = std::move(onSettings);
     thread_ = std::thread([this] { runLoop(); });
 }
 
@@ -278,6 +279,16 @@ void StreamClient::runLoop() {
                 LOGI("Received reconfiguration: %zu stream(s)", newStreams.size());
                 if (onReconfigure_)
                     onReconfigure_(newStreams);
+                continue;
+            }
+
+            if (peek == 0xFE) {
+                uint8_t flag;
+                if (!readExact(&flag, 1))
+                    break;
+                LOGI("Received settings: smoothingEnabled=%d", flag != 0);
+                if (onSettings_)
+                    onSettings_(flag != 0);
                 continue;
             }
 

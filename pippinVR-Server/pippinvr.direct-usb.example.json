@@ -1,0 +1,9 @@
+{
+  "transport": "directMonado",
+  "directUSB": {
+    "refreshHz": 90,
+    "rayIdleSeconds": 2.0,
+    "rayWakeDistanceMeters": 0.02,
+    "rayWakeAngleDegrees": 3.0
+  }
+}

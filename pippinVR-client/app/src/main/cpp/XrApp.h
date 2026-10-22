@@ -15,6 +15,7 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <jni.h>
 #include <memory>
@@ -84,6 +85,7 @@ class XrApp {
     void onStreams(const std::vector<StreamInfo>& streams);
     void onFrame(FramePacket&& packet);
     void onConnectionStatus(bool connected, const char* message);
+    void onSettings(bool smoothingEnabled);
 
    private:
     bool initEgl();
@@ -136,6 +138,7 @@ class XrApp {
 
     std::mutex decodersMutex_;
     std::vector<std::unique_ptr<StreamDecoder>> decoders_;
+    std::atomic<bool> smoothingEnabled_{false};
 
     std::mutex statusMutex_;
     bool connected_ = false;

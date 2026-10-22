@@ -13,6 +13,17 @@ func showModalError(title: String, message: String) {
     alert.runModal()
 }
 
+@MainActor
+func showModalWarning(title: String, message: String) {
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = message
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "OK")
+    alert.icon = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+    alert.runModal()
+}
+
 struct PipelineOptions {
     var config = ServerConfig()
     var configPath: String?
@@ -73,6 +84,14 @@ final class PipelineSession: @unchecked Sendable {
 
     var config: ServerConfig {
         options.config
+    }
+
+    var currentThroughputMbps: Double {
+        sink?.currentThroughputMbps ?? 0
+    }
+
+    var droppedFrameCount: Int {
+        sink?.droppedFrameCount ?? 0
     }
 
     func requestStop() {
@@ -153,8 +172,9 @@ final class PipelineSession: @unchecked Sendable {
                 activeDisplays = Array(repeating: 0, count: Int(count))
                 CGGetActiveDisplayList(count, &activeDisplays, &count)
                 
-                Logger.info("Reconfigure: Disabling mirroring for ALL \(count) active displays")
-                for displayID in activeDisplays {
+                let preserve = displayIDsPreservingMirror(built)
+                Logger.info("Reconfigure: Disabling mirroring for \(count) active display(s), preserving \(preserve.count)")
+                for displayID in activeDisplays where !preserve.contains(displayID) {
                     _ = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
                 }
             }
@@ -191,6 +211,15 @@ final class PipelineSession: @unchecked Sendable {
         }
     }
 
+    /// Display IDs that should keep whatever mirror relationship macOS gave
+    /// them by default, instead of having it forced off like every other
+    /// display. Currently just "pippinvr-main" -- named for exactly this
+    /// purpose, showing the real screen, unlike the independent extended
+    /// -desktop panels ("Left"/"Right") that should stay unmirrored.
+    private func displayIDsPreservingMirror(_ pipelines: [DisplayPipeline]) -> Set<CGDirectDisplayID> {
+        Set(pipelines.compactMap { $0.entry.name == "pippinvr-main" ? $0.display?.displayID : nil })
+    }
+
     enum ReconfigurationError: Error, CustomStringConvertible {
         case notRunning
         case notStreaming
@@ -212,6 +241,7 @@ final class PipelineSession: @unchecked Sendable {
     }
 
     func verifyAndFixMirroring(pipelines: [DisplayPipeline]) {
+        let preserve = displayIDsPreservingMirror(pipelines)
         var activeDisplays: [CGDirectDisplayID] = []
         var count: UInt32 = 0
         CGGetActiveDisplayList(0, nil, &count)
@@ -219,16 +249,16 @@ final class PipelineSession: @unchecked Sendable {
             activeDisplays = Array(repeating: 0, count: Int(count))
             CGGetActiveDisplayList(count, &activeDisplays, &count)
         }
-        
+
         var foundMirroring = false
-        for displayID in activeDisplays {
+        for displayID in activeDisplays where !preserve.contains(displayID) {
             let mirrorSource = CGDisplayMirrorsDisplay(displayID)
             if mirrorSource != kCGNullDirectDisplay {
                 Logger.warning("Display mirrored \(mirrorSource) after transaction")
                 foundMirroring = true
             }
         }
-        
+
         if foundMirroring {
             var config: CGDisplayConfigRef?
             let beginResult = CGBeginDisplayConfiguration(&config)
@@ -236,8 +266,8 @@ final class PipelineSession: @unchecked Sendable {
                 Logger.error("Failed to create fix transaction: \(beginResult.rawValue)")
                 return
             }
-            
-            for displayID in activeDisplays {
+
+            for displayID in activeDisplays where !preserve.contains(displayID) {
                 let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
                 if result == .success {
                     Logger.debug("Fixed mirroring for display \(displayID)")
@@ -503,7 +533,8 @@ final class PipelineSession: @unchecked Sendable {
                 activeDisplays = Array(repeating: 0, count: Int(count))
                 CGGetActiveDisplayList(count, &activeDisplays, &count)
                 
-                for displayID in activeDisplays {
+                let preserve = displayIDsPreservingMirror(built)
+                for displayID in activeDisplays where !preserve.contains(displayID) {
                     let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
                     if result == .success {
                         Logger.debug("Disabled mirroring for display \(displayID)")

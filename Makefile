@@ -1,4 +1,4 @@
-.PHONY: all build build-server build-server-app build-dmg dmg-layout build-client build-client-release clean clean-server clean-client install install-server install-server-app install-client help
+.PHONY: all build build-server build-server-app build-newt build-dmg dmg-layout build-client build-client-release clean clean-server clean-client install install-server install-server-app install-client help
 
 all: build-server-app
 
@@ -6,6 +6,11 @@ build: build-server-app build-client
 
 build-server:
 	@cd pippinVR-Server && swift build -c release
+
+# Optional: build the separate Newt project so Direct USB compiles in.
+# Needs a Newt checkout (../Newt or NEWT_SOURCE_DIR) + OpenXR/Vulkan SDKs.
+build-newt:
+	@cd pippinVR-Server && ./build-newt.sh
 
 build-server-app:
 	@cd pippinVR-Server && ./build-app.sh release
@@ -68,6 +73,7 @@ help:
 	@echo "  make build-dmg          - Build universal app + DMG installer"
 	@echo "  make dmg-layout         - Regenerate DMG window layout (needs GUI)"
 	@echo "  make build-server       - Build server executable only"
+	@echo "  make build-newt         - Build separate Newt project (enables Direct USB)"
 	@echo "  make install-server-app - Install app to /Applications"
 	@echo "  make install-server     - Install executable to /usr/local/bin"
 	@echo "  make run-server         - Run server in GUI mode"

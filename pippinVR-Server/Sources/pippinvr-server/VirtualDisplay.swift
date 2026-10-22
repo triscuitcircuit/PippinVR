@@ -124,32 +124,32 @@ final class VirtualDisplay {
             Logger.debug("Configured display \(displayID) to disable mirroring")
             return true
         } else {
-            Logger.warning("Failed to configure mirroring disable for display \(displayID) (error: \(result.rawValue))")
+            Logger.debug("Failed to configure mirroring disable for display \(displayID) (error: \(result.rawValue))")
             return false
         }
     }
-    
+
     private func logDisplayDiagnostics() {
         let isMirrored = CGDisplayIsInMirrorSet(displayID) != 0
         let mirrorPrimary = CGDisplayMirrorsDisplay(displayID)
-        
+
         let bounds = CGDisplayBounds(displayID)
-        
+
         let isMain = CGDisplayIsMain(displayID) != 0
-        
+
         let isActive = CGDisplayIsActive(displayID) != 0
         Logger.info("""
                     VirtualDisplay created: ID=\(displayID), size=\(width)x\(height)
                             bounds=\(bounds), isMain=\(isMain), isActive=\(isActive)
                             isMirrored=\(isMirrored), mirrorPrimary=\(mirrorPrimary)
                     """)
-        
+
         if isMirrored {
-            Logger.warning("Display \(displayID) Mirrored")
+            Logger.debug("Display \(displayID) Mirrored")
         }
-        
+
         if mirrorPrimary != kCGNullDirectDisplay {
-            Logger.warning("Display \(displayID) is mirroring display \(mirrorPrimary)")
+            Logger.debug("Display \(displayID) is mirroring display \(mirrorPrimary)")
         }
     }
 

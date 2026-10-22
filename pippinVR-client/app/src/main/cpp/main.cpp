@@ -80,7 +80,8 @@ void android_main(android_app* app) {
         [&state](const std::vector<pippinvr::StreamInfo>& streams) { state.xr.onStreams(streams); },
         [&state](bool connected, const char* message) {
             state.xr.onConnectionStatus(connected, message);
-        });
+        },
+        [&state](bool smoothingEnabled) { state.xr.onSettings(smoothingEnabled); });
 
     bool exitRequested = false;
 

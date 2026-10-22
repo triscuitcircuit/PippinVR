@@ -1,29 +1,29 @@
 #ifndef PIPPINVR_DECODER_H
 #define PIPPINVR_DECODER_H
 
+#include "NdkHandles.h"
+#include "Net.h"
+
+#include <android/hardware_buffer.h>
+#include <android/native_window.h>
+
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <mutex>
 #include <thread>
 
-#include <android/hardware_buffer.h>
-#include <android/native_window.h>
-
-#include "NdkHandles.h"
-#include "Net.h"
-
 namespace pippinvr {
 
 class StreamDecoder {
-public:
+   public:
     StreamDecoder() = default;
     ~StreamDecoder();
 
     StreamDecoder(const StreamDecoder&) = delete;
     StreamDecoder& operator=(const StreamDecoder&) = delete;
-
 
     bool init(const StreamInfo& info);
     void shutdown();
@@ -32,15 +32,20 @@ public:
 
     AHardwareBuffer* acquireLatest();
 
+    void setSmoothingEnabled(bool enabled) {
+        smoothingEnabled_.store(enabled, std::memory_order_relaxed);
+    }
+
     const StreamInfo& info() const { return info_; }
     uint64_t framesDecoded() const { return framesDecoded_.load(std::memory_order_relaxed); }
     uint64_t framesDropped() const { return framesDropped_.load(std::memory_order_relaxed); }
 
-private:
+   private:
     void workerLoop();
     bool configureFromKeyframe(const FramePacket& pkt);
     void feed(const FramePacket& pkt);
     void drainOutput();
+    AHardwareBuffer* acquirePaced();
 
     StreamInfo info_;
 
@@ -50,6 +55,9 @@ private:
     bool configured_ = false;
 
     ImagePtr currentImage_;
+
+    std::atomic<bool> smoothingEnabled_{false};
+    std::chrono::steady_clock::time_point lastAcquireTime_{};
 
     std::deque<FramePacket> queue_;
     std::mutex mutex_;

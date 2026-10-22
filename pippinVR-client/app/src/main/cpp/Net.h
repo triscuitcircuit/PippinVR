@@ -36,6 +36,8 @@ class StreamClient {
     using FrameFn = std::function<void(FramePacket&&)>;
     using ReconfigureFn = std::function<void(const std::vector<StreamInfo>&)>;
     using StatusFn = std::function<void(bool connected, const char* message)>;
+    /// Toggles display-pacing mode -- see StreamDecoder::setSmoothingEnabled.
+    using SettingsFn = std::function<void(bool smoothingEnabled)>;
 
     StreamClient(std::string host, uint16_t port);
     ~StreamClient();
@@ -44,7 +46,7 @@ class StreamClient {
     StreamClient& operator=(const StreamClient&) = delete;
 
     void start(HeaderFn onHeader, FrameFn onFrame, ReconfigureFn onReconfigure = nullptr,
-               StatusFn onStatus = nullptr);
+               StatusFn onStatus = nullptr, SettingsFn onSettings = nullptr);
     void stop();
 
     bool connected() const { return connected_.load(std::memory_order_relaxed); }
@@ -71,6 +73,7 @@ class StreamClient {
     FrameFn onFrame_;
     ReconfigureFn onReconfigure_;
     StatusFn onStatus_;
+    SettingsFn onSettings_;
 };
 
 }  // namespace pippinvr
