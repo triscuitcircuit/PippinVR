@@ -53,19 +53,7 @@ final class StatusItemController {
         let connected = session.clientConnected
         let headsetPresent = USBLinkSpeed.detectQuestLinkSpeed() != nil
 
-        if let button = statusItem.button {
-            let color: NSColor = if streaming && connected {
-                .systemGreen
-            } else if headsetPresent {
-                .systemYellow
-            } else {
-                .systemRed
-            }
-            button.attributedTitle = NSAttributedString(
-                string: " \u{25CF}",
-                attributes: [.foregroundColor: color, .font: NSFont.systemFont(ofSize: 11)]
-            )
-        }
+        statusItem.button?.setStatusDot(streaming && connected ? .systemGreen : headsetPresent ? .systemYellow : .systemRed)
 
         let menu = NSMenu()
 
@@ -119,14 +107,10 @@ final class StatusItemController {
         menu.addItem(resetItem)
 
         #if PIPPINVR_DIRECT
-        // Direct USB needs no sideloaded client; offer it when a Quest is on
-        // USB but the APK client has not connected (see docs/DIRECT-USB.md).
-        if headsetPresent && !connected {
-            let direct = NSMenuItem(title: "Connect with USB Direct (no APK required)",
-                                    action: #selector(connectDirect), keyEquivalent: "")
-            direct.target = self
-            menu.addItem(direct)
-        }
+        let direct = NSMenuItem(title: "Switch to Direct USB (QuestLink)",
+                                action: #selector(connectDirect), keyEquivalent: "")
+        direct.target = self
+        menu.addItem(direct)
         #endif
 
         menu.addItem(.separator())

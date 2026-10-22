@@ -147,8 +147,10 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            echo "dmg_name=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
           else
             echo "value=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "dmg_name=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build PippinVR.app
@@ -162,7 +164,7 @@ jobs:
         working-directory: pippinVR-Server
         env:
           CODESIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
-          VERSION: ${{ steps.version.outputs.value }}
+          VERSION: ${{ steps.version.outputs.dmg_name }}
           APPLE_API_KEY_PATH: ${{ steps.notary.outputs.path }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}

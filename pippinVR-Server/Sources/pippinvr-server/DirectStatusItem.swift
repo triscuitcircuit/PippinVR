@@ -19,22 +19,10 @@ final class DirectStatusItemController: NSObject, ObservableObject {
     @Published var deviceInfo: [USBLinkSpeed.DeviceInfo] = []
     @Published var settingsMenu = NSMenu()
     @Published var apps: [AppEntry] = []
-    // Settings' Environment tab owns the UI for these -- see
-    // chooseEnvironmentImage/clearEnvironmentImage/toggle*Flip below. The
-    // image/flip state itself isn't known to the real Newt/Monado-side
-    // renderer (which just receives one-shot "environment:PATH" /
-    // "environment-flip-v" / "environment-flip-h" / "environment-clear"
-    // commands, see DirectMonadoSession.command), so it's tracked here only
-    // so the Environment tab can still show *something* -- a preview and
-    // the current flip state -- after Settings is closed and reopened.
     @Published var environmentImageURL: URL?
     @Published var environmentFlippedVertically = false
     @Published var environmentFlippedHorizontally = false
-    // Settings' Screens tab lets the user type a custom size before hitting
-    // Add Screen, mirroring Quest Client's per-DisplayEntry width/height
-    // fields -- unlike panelWidth (the VR-side capture/panel texture size,
-    // picked from 3 presets), this is the actual macOS virtual display's
-    // resolution, so it's unbounded free-form like DisplayEntry's.
+
     @Published var nextScreenWidth = UserDefaults.standard.integer(forKey: "directNextScreenWidth") == 0 ? 1920 : UserDefaults.standard.integer(forKey: "directNextScreenWidth") {
         didSet { UserDefaults.standard.set(nextScreenWidth, forKey: "directNextScreenWidth") }
     }
@@ -54,9 +42,7 @@ final class DirectStatusItemController: NSObject, ObservableObject {
 
     func install() {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // Fallback matters here: if "visionpro" isn't a resolvable SF Symbol
-        // on this system/SDK, image silently ends up nil and the status item
-        // renders completely blank -- present, but invisible.
+
         item?.button?.image = NSImage(systemSymbolName: "visionpro", accessibilityDescription: "PippinVR Direct USB")
             ?? NSImage(systemSymbolName: "display", accessibilityDescription: "PippinVR Direct USB")
         item?.button?.image?.isTemplate = true
@@ -94,11 +80,16 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         entry.isEnabled = session.applicationName == nil && (command.hasPrefix("fps:") || command.hasPrefix("resolution:") || session.state.running) && (!command.hasPrefix("add-") && !command.hasPrefix("display:") || panelSources.count < maxPanels)
     }
 
+    private func updateStatusColor(running: Bool, present: Bool) {
+        item?.button?.setStatusDot(running && present ? .systemGreen : present ? .systemYellow : .systemRed)
+    }
+
     private func rebuild() {
         let menu = NSMenu()
         menu.autoenablesItems = false
         let present = USBLinkSpeed.detectQuestLinkSpeed() != nil
         let state = session.state
+        updateStatusColor(running: state.running, present: present)
         if state.externallyActive {
             menu.addItem(withTitle: "Headset in use by another app (e.g. Godot Play)", action: nil, keyEquivalent: "")
             let waiting = menu.addItem(withTitle: "Waiting for it to finish…", action: nil, keyEquivalent: "")
@@ -281,7 +272,6 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         if command.hasPrefix("add-camera:") || command.hasPrefix("add-device:"), AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined {
             let queuedCommand = command
             AVCaptureDevice.requestAccess(for: .video) { [session] _ in
-                // A denied camera still creates an explanatory panel.
                 session.command(queuedCommand)
             }
         } else { session.command(command) }
@@ -294,46 +284,24 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         }
         do {
             var config = DisplayConfig()
-            // CGVirtualDisplay rejects odd dimensions, matching the same
-            // constraint Config.swift enforces on Quest Client's DisplayEntry.
             config.width = min(max(nextScreenWidth, 2), 16384) / 2 * 2
             config.height = min(max(nextScreenHeight, 2), 16384) / 2 * 2
             config.refreshHz = Double(captureFPS)
             config.hiDPI = false
             config.serial = nextSerial
-            // Every virtual display previously shared the same hardcoded
-            // vendorID/productID, varying only by serial -- CGVirtualDisplay
-            // (and macOS's window server mode/arrangement cache) can treat
-            // displays with matching vendor+product as the same model and
-            // reuse/share a single preferred mode across them, which looks
-            // exactly like "adding screen #2 at a new size also resizes
-            // screen #1." Deriving productID from the serial gives each
-            // virtual display a genuinely distinct identity.
+
             config.productID = 0x1234 + nextSerial
             nextSerial += 1
             config.name = "PippinVR Direct \(virtualDisplays.count + 1)"
             let display = try VirtualDisplay(config: config)
             virtualDisplays.append(display)
-            // A single, first-ever virtual display showed mirrored=true
-            // immediately on creation, with nothing else active to mirror --
-            // it mirrors something (almost certainly the real display) from
-            // the moment it exists, regardless of position. And the
-            // un-mirror/reposition calls both failed (error 1001) only on
-            // the display *just* created, while succeeding on already-
-            // existing ones -- as if the window server hasn't finished
-            // registering a brand new CGVirtualDisplay in the same
-            // transaction pass as its own creation. Retry shortly after,
-            // once it's had time to settle, instead of only trying once
-            // immediately.
+
             fixupDisplayArrangement()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.fixupDisplayArrangement() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.fixupDisplayArrangement() }
             panelSources.append(display.displayID)
             session.command("add-display:\(display.displayID)")
             session.command("notice:Virtual screen added — Hide dashboard to arrange it")
-            // Diagnostic: if any cached displayID below doesn't match its
-            // live re-query, the window server reassigned IDs out from
-            // under us -- a separate possible explanation for the same bug.
             for (index, tracked) in virtualDisplays.enumerated() {
                 let cached = tracked.displayID
                 let live = tracked.liveDisplayID
@@ -352,9 +320,6 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         }
     }
 
-    // Un-mirrors and lays out every tracked virtual display side by side.
-    // Idempotent and safe to call repeatedly -- already-correct displays
-    // just report back "nothing to do" / "ok" again.
     private func fixupDisplayArrangement() {
         var transaction: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&transaction) == .success, let transaction else { return }
@@ -391,11 +356,6 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         rebuild()
     }
 
-    // Lives in Settings' Environment tab, not the status-bar menu -- see
-    // SettingsView.swift's environmentPanel. Equirectangular panoramas are
-    // inconsistently authored (upside down, mirrored, 90/180 off) depending
-    // on what captured/converted them, so flip is a live toggle rather than
-    // something to get "correct" once and bake in.
     func chooseEnvironmentImage() {
         guard !presentingPicker else { return }
         presentingPicker = true
@@ -502,12 +462,6 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         }
     }
 
-    /// Remembered so the in-headset Apps tile can launch directly -- a
-    /// picker is a Mac-side modal dialog with no presence in the headset:
-    /// squeezing the trigger on the dashboard's Apps tile fires this
-    /// correctly, but then waits on a dialog the user wearing the headset
-    /// can't see or click, which looks exactly like the launch silently
-    /// doing nothing.
     private var defaultAppPath: String? {
         get { UserDefaults.standard.string(forKey: "directDefaultAppPath") }
         set { UserDefaults.standard.set(newValue, forKey: "directDefaultAppPath") }
@@ -557,9 +511,6 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         returnToDashboard = false
         rebuild()
         Task { @MainActor in
-            // Prefer routing through the shared Newt manager (if it's the one
-            // supervising this session) rather than independently starting
-            // another headset-owning process.
             if await session.launchViaManager(executable: executable) {
                 switchingApplication = false
                 returnToDashboard = true

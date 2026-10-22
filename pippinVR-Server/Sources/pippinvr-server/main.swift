@@ -148,7 +148,7 @@ func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool, dockIcon: 
     if has("--eager-displays") {
         options.waitForClient = false
     } else if isGUIMode {
-        options.waitForClient = false
+        options.waitForClient = USBLinkSpeed.detectQuestLinkSpeed() == nil
     } else {
         options.waitForClient = true
     }
