@@ -80,6 +80,12 @@ cmake -S "${OPENXR_SRC_DIR}" -B "${OPENXR_BUILD_DIR}" \
     -DBUILD_WITH_SYSTEM_JSONCPP=OFF
 /usr/bin/make -C "${OPENXR_BUILD_DIR}" -j8 openxr_loader
 
+GLSLANGVALIDATOR_COMMAND="${GLSLANGVALIDATOR_COMMAND:-$(command -v glslangValidator || true)}"
+if [ -z "${GLSLANGVALIDATOR_COMMAND}" ]; then
+    echo "error: glslangValidator not found on PATH (brew install glslang)." >&2
+    exit 1
+fi
+
 echo "=== [2/2] Building Monado (quest_link) in ${MONADO_BUILD_DIR} ==="
 EXTRA_INCLUDES="-DEIGEN_MPL2_ONLY -I/opt/homebrew/include -I/usr/local/include"
 cmake -S "${MONADO_SRC_DIR}" -B "${MONADO_BUILD_DIR}" \
@@ -88,7 +94,7 @@ cmake -S "${MONADO_SRC_DIR}" -B "${MONADO_BUILD_DIR}" \
     -DCMAKE_MAKE_PROGRAM=/usr/bin/make \
     -DPython3_EXECUTABLE=/usr/bin/python3 \
     -DPYTHON_EXECUTABLE=/usr/bin/python3 \
-    -DGLSLANGVALIDATOR_COMMAND=/usr/local/bin/glslangValidator \
+    -DGLSLANGVALIDATOR_COMMAND="${GLSLANGVALIDATOR_COMMAND}" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_C_FLAGS="${EXTRA_INCLUDES}" \
     -DCMAKE_CXX_FLAGS="${EXTRA_INCLUDES}" \

@@ -72,6 +72,10 @@ jobs:
       - name: Export VULKAN_SDK
         run: echo "VULKAN_SDK=${HOME}/VulkanSDK/1.4.363.0/macOS" >> "$GITHUB_ENV"
 
+      - name: Install Monado build dependencies
+        run: |
+          brew install nlohmann-json capnp cjson glslang hidapi jpeg-turbo libusb sdl2-compat
+
       - name: Developer ID certificate nonsense
         id: signing
         env:
