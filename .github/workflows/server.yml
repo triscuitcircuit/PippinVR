@@ -28,6 +28,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Select Xcode
         run: |
@@ -45,6 +47,30 @@ jobs:
           path: pippinVR-Server/.build
           key: swiftpm-${{ runner.os }}-${{ hashFiles('pippinVR-Server/Package.swift', 'pippinVR-Server/Package.resolved') }}
           restore-keys: swiftpm-${{ runner.os }}-
+
+      - name: Cache Vulkan SDK
+        id: vulkan-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/VulkanSDK
+          key: vulkan-sdk-macos-1.4.363.0
+
+      - name: Install Vulkan SDK
+        if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        run: |
+          VULKAN_VERSION=1.4.363.0
+          curl -sL -o "${RUNNER_TEMP}/vulkan_sdk.zip" \
+            "https://sdk.lunarg.com/sdk/download/${VULKAN_VERSION}/mac/vulkan_sdk.zip"
+          unzip -q "${RUNNER_TEMP}/vulkan_sdk.zip" -d "${RUNNER_TEMP}/vulkan_sdk_extracted"
+          INSTALLER="${RUNNER_TEMP}/vulkan_sdk_extracted/vulkansdk-macOS-${VULKAN_VERSION}.app/Contents/MacOS/vulkansdk-macOS-${VULKAN_VERSION}"
+          chmod +x "${INSTALLER}"
+          "${INSTALLER}" install \
+            --root "${HOME}/VulkanSDK/${VULKAN_VERSION}" \
+            --accept-licenses --default-answer --confirm-command
+          rm -rf "${RUNNER_TEMP}/vulkan_sdk.zip" "${RUNNER_TEMP}/vulkan_sdk_extracted"
+
+      - name: Export VULKAN_SDK
+        run: echo "VULKAN_SDK=${HOME}/VulkanSDK/1.4.363.0/macOS" >> "$GITHUB_ENV"
 
       - name: Developer ID certificate nonsense
         id: signing
