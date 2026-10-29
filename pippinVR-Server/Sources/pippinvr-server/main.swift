@@ -8,9 +8,9 @@ IOSDeviceCore.enableScreenCaptureDevices()
 
 func requestCameraAccessEarly() {
     Logger.info("Checking camera access permissions")
-    
+
     let status = AVCaptureDevice.authorizationStatus(for: .video)
-    
+
     switch status {
     case .authorized:
         Logger.info("Camera access already authorized")
@@ -68,6 +68,8 @@ pippinvr-server
 
 """
 
+nonisolated(unsafe) var startupConnectsDirect = false
+
 func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool, dockIcon: Bool) {
     let args = CommandLine.arguments
     func value(_ flag: String) -> String? {
@@ -90,6 +92,13 @@ func parseArgs() -> (PipelineOptions, printOnly: Bool, menuBar: Bool, dockIcon: 
     }
     if has("--quest-client") || has("--adb-reverse") {
         config.transport = .questClient
+    }
+
+    let appLaunch = args.count <= 1 || has("--gui")
+    if appLaunch && !has("--tcp") && !has("--file") &&
+        !has("--direct-usb") && !has("--quest-client") && !has("--adb-reverse") {
+        config.transport = StartupPreferences.transport(configured: config.transport)
+        startupConnectsDirect = config.transport == .directMonado
     }
 
     if let c = value("--codec") {
@@ -221,6 +230,7 @@ installSignalHandlers()
 #if PIPPINVR_DIRECT
 if options.config.transport == .directMonado {
     if DirectMonadoSession.isAvailable {
+        StartupPreferences.record(.directMonado)
         let directSession = DirectMonadoSession(configPath: options.configPath)
         activeDirectSession = directSession
         if wantMenuBar || wantDockIcon {
@@ -231,7 +241,7 @@ if options.config.transport == .directMonado {
             app.delegate = directDelegate
             let directMenu = DirectStatusItemController(session: directSession)
             directMenu.install()
-            if CommandLine.arguments.contains("--connect-direct") { directSession.connect() }
+            if CommandLine.arguments.contains("--connect-direct") || startupConnectsDirect { directSession.connect() }
             withExtendedLifetime((directMenu, directDelegate)) { app.run() }
         } else {
             Task.detached {
@@ -260,6 +270,7 @@ if options.config.transport == .directMonado {
 
 requestCameraAccessEarly()
 
+StartupPreferences.record(.questClient)
 let session = PipelineSession(options: options)
 activeSession = session
 

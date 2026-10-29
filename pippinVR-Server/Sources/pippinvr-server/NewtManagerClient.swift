@@ -35,8 +35,6 @@ actor NewtManagerClient {
         socketPath = ipcDir + "/session.sock"
     }
 
-    // MARK: Socket protocol
-
     private func request(_ message: [String: Any]) throws -> [String: Any] {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
@@ -100,8 +98,6 @@ actor NewtManagerClient {
         }
         return json
     }
-
-    // MARK: Session lifecycle (shared with Godot's plugin.gd/session.gd)
 
     struct ManagerStatus: Sendable {
         let ok: Bool

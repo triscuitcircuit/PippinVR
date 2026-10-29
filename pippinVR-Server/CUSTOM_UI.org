@@ -1,0 +1,102 @@
+#+AUTHOR: Triscuitcircuit
+#+DATE: \today
+#+LaTeX_HEADER: \documentclass[10pt,a4paper,showtrims]
+#+LaTeX_HEADER: \hypersetup{colorlinks=true, urlcolor={blue}, linkcolor={blue}}
+
+#+LaTex_HEADER: \usepackage[labelfont=bf]{caption}
+
+#+LaTeX_HEADER: \usepackage{tcolorbox}
+#+OPTIONS: h:3
+#+STARTUP: inlineimages
+#+TITLE:  PippinVR Custom Headset Panels
+#+SUBTITLE: Showing your own cards in the headset from scripts or dashboard code
+#+latex: \clearpage
+
+* Custom Headset Panels
+Cards with a title, text lines, an optional picture and buttons, shown in the headset while ~PippinVR~ runs (USB Direct mode). Point at a button with a controller and pull the trigger to press it.
+
+There are two ways to make one: from a script (no rebuild), or from dashboard code.
+
+* From a Script
+The dashboard watches =~/Library/Application Support/Newt/ui/panels/= (or ~$NEWT_STATE_DIR/ui/panels/~) about twice a second. There is one JSON file per panel:
+- Writing ~<id>.json~ shows the panel, or updates it if it is already shown.
+- Deleting the file removes the panel.
+- Closing a panel in the headset (/x/) hides it until the file changes again.
+
+#+BEGIN_SRC json
+{
+  "title": "Render finished",
+  "lines": ["scene.blend → 240 frames", "Took 12 min"],
+  "image": "~/Desktop/preview.png",
+  "buttons": ["Open", {"id": "later", "label": "Remind me later"}],
+  "anchor": "world",
+  "width": 0.55,
+  "position": [0, -0.05, -0.9],
+  "closable": true,
+  "accent": [0.45, 0.85, 0.72]
+}
+#+END_SRC
+
+Every key is optional.
+
+| Key        | Meaning                                                                                                                                                                                                           |
+|------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ~title~    | Bold heading (up to 80 characters).                                                                                                                                                                               |
+| ~lines~    | Text lines (or one string): up to 16, each up to 120 characters.                                                                                                                                                  |
+| ~image~    | A picture file (PNG, JPEG, HEIC…) shown under the text; =~= is expanded.                                                                                                                                          |
+| ~buttons~  | Up to 9 buttons, 3 per row. A string is both the label and the id; otherwise ~{"id", "label"}~.                                                                                                                   |
+| ~anchor~   | ~"world"~ (default): placed in front of you when shown, then stays put in the room. ~"head"~: follows your head, drawn over everything. ~"dashboard"~: part of the dashboard, shown while the menu is open.         |
+| ~width~    | Meters across (0.15–2). The height follows the content.                                                                                                                                                           |
+| ~position~ | ~[x, y, z]~ in meters, relative to the anchor: x right, y up, −z ahead. For ~world~, relative to where you are when the panel first appears.                                                                      |
+| ~closable~ | Show the /x/ button (default true).                                                                                                                                                                               |
+| ~accent~   | Heading and stripe colour, ~[r, g, b]~ from 0 to 1.                                                                                                                                                               |
+
+A file that can't be used is reported once per version in the log (~Custom panel <id>: …~) and isn't shown.
+
+** Button Presses
+Presses and closes are appended to ~ui/events.jsonl~ next to ~panels/~, one JSON object per line:
+#+BEGIN_SRC json
+{"time": 1793534400.12, "panel": "render", "event": "button", "button": "later"}
+{"time": 1793534410.40, "panel": "render", "event": "closed"}
+#+END_SRC
+
+The file is kept under 64 KB; older lines are dropped. Follow it with ~tail -F~.
+
+~build_scripts/Show-Headset-Panel-Example.command~ shows a panel, waits for a press, then answers with a second panel and removes it:
+#+BEGIN_SRC sh
+./build_scripts/Show-Headset-Panel-Example.command
+#+END_SRC
+
+* From Dashboard Code
+#+BEGIN_SRC cpp
+customui::PanelSpec spec;
+spec.id = "calibration";
+spec.title = "Look at the target";
+spec.lines = {"Hold still for 3 seconds."};
+spec.buttons = {{"skip", "Skip"}};
+spec.anchor = customui::Anchor::Head;
+ShowCustomPanel(spec, [this](const std::string& panel, const std::string& event, const std::string& button) {
+    if (event == "button" && button == "skip") RemoveCustomPanel(panel);
+});
+#+END_SRC
+
+- Calling ~ShowCustomPanel~ again with the same id updates the panel. Its handler is kept unless a new one is given.
+- ~RemoveCustomPanel(id)~ removes it.
+- The handler runs on the dashboard's input thread.
+
+Code panels don't write to ~events.jsonl~; a closed code panel is removed.
+
+* Notes
+- Panels take the trigger press when you point at them, so they can't also click a screen behind them.
+- Pictures are read when the panel is shown or changed, not streamed. For live images, rewrite the panel file sparingly; each change redraws the card.
+- Holding a controller's Meta button for a second recenters the room content, including /world/ panels.
+
+* Design
+- ~Sources/NewtDashboard/CustomUI.h~: the panel description and layout (pure, testable).
+- ~Sources/NewtDashboard/CustomUIParse.mm~: script JSON to a panel description.
+- ~Sources/NewtDashboard/CustomUI.mm~: drawing, controller input, the panel files and the events file.
+
+Tests (no headset needed):
+#+BEGIN_SRC sh
+python3 Tests/DirectUSB/run_dashboard_tests.py
+#+END_SRC

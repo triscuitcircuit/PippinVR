@@ -8,6 +8,8 @@ on:
     branches: [ "main" ]
     paths:
       - 'pippinVR-Server/**'
+      - 'Newt/**'
+      - '.gitmodules'
       - '.github/workflows/server.yml'
       - 'LICENSE'
       - 'README.md'
@@ -24,7 +26,7 @@ jobs:
     name: Installer creation
     runs-on: macos-26
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -33,20 +35,50 @@ jobs:
 
       - name: Select Xcode
         run: |
-          if [ -d /Applications/Xcode_16.4.app ]; then
-            sudo xcode-select -s /Applications/Xcode_16.4.app
-          else
-            echo "::warning::Xcode_16.4 not on this image; using the default."
-            ls -d /Applications/Xcode*.app
-          fi
+          xcodebuild -version
           swift --version
+          echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
 
-      - name: Cache SwiftPM build
+      - name: Check Sparkle release configuration
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SPARKLE_FEED_URL: ${{ vars.SPARKLE_FEED_URL }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+        run: |
+          for name in SPARKLE_FEED_URL SPARKLE_PUBLIC_ED_KEY SPARKLE_PRIVATE_ED_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Configure $name before publishing a release tag."
+              exit 1
+            fi
+          done
+          expected="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/updates/appcast.xml"
+          if [ "$SPARKLE_FEED_URL" != "$expected" ]; then
+            echo "::error::This workflow publishes to $expected. Set SPARKLE_FEED_URL to that URL."
+            exit 1
+          fi
+
+      - name: Submodule revisions
+        id: submodules
+        run: |
+          echo "monado=$(git -C pippinVR-Server/third_party/monado-ql rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "newt=$(git -C Newt rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Audio and update configuration tests
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          python3 pippinVR-Server/Tests/DirectUSB/run_audio_tests.py
+          python3 pippinVR-Server/Tests/DirectUSB/update_configuration_test.py
+          python3 pippinVR-Server/Tests/DirectUSB/appcast_test.py
+
+      - name: Cache SwiftPM downloads
         uses: actions/cache@v4
         with:
-          path: pippinVR-Server/.build
-          key: swiftpm-${{ runner.os }}-${{ hashFiles('pippinVR-Server/Package.swift', 'pippinVR-Server/Package.resolved') }}
-          restore-keys: swiftpm-${{ runner.os }}-
+          path: |
+            pippinVR-Server/.build/repositories
+            pippinVR-Server/.build/artifacts
+          key: swiftpm-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pippinVR-Server/Package.resolved') }}
 
       - name: Cache Vulkan SDK
         id: vulkan-cache
@@ -59,8 +91,9 @@ jobs:
         if: steps.vulkan-cache.outputs.cache-hit != 'true'
         run: |
           VULKAN_VERSION=1.4.363.0
-          curl -sL -o "${RUNNER_TEMP}/vulkan_sdk.zip" \
+          curl --fail --retry 3 -sL -o "${RUNNER_TEMP}/vulkan_sdk.zip" \
             "https://sdk.lunarg.com/sdk/download/${VULKAN_VERSION}/mac/vulkan_sdk.zip"
+          echo "163431e0203c8215286a17cf393643ce6b951f77d1b4f74ab30821a1f0beb09b  ${RUNNER_TEMP}/vulkan_sdk.zip" | shasum -a 256 -c -
           unzip -q "${RUNNER_TEMP}/vulkan_sdk.zip" -d "${RUNNER_TEMP}/vulkan_sdk_extracted"
           INSTALLER="${RUNNER_TEMP}/vulkan_sdk_extracted/vulkansdk-macOS-${VULKAN_VERSION}.app/Contents/MacOS/vulkansdk-macOS-${VULKAN_VERSION}"
           chmod +x "${INSTALLER}"
@@ -70,13 +103,19 @@ jobs:
           rm -rf "${RUNNER_TEMP}/vulkan_sdk.zip" "${RUNNER_TEMP}/vulkan_sdk_extracted"
 
       - name: Export VULKAN_SDK
-        run: echo "VULKAN_SDK=${HOME}/VulkanSDK/1.4.363.0/macOS" >> "$GITHUB_ENV"
+        run: |
+          SDK="${HOME}/VulkanSDK/1.4.363.0/macOS"
+          test -f "$SDK/lib/libvulkan.1.dylib"
+          test -f "$SDK/lib/libMoltenVK.dylib"
+          test -x "$SDK/bin/glslangValidator"
+          echo "VULKAN_SDK=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/bin" >> "$GITHUB_PATH"
 
       - name: Install Monado build dependencies
         run: |
           brew install nlohmann-json capnp cjson glslang hidapi jpeg-turbo libusb sdl2-compat
 
-      - name: Developer ID certificate nonsense
+      - name: Import Developer ID certificate
         id: signing
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -84,6 +123,10 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
         run: |
           if [ -z "$MACOS_CERTIFICATE_P12" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              echo "::error::Tagged releases require a Developer ID certificate. Configure MACOS_CERTIFICATE_P12 and MACOS_CERTIFICATE_PASSWORD."
+              exit 1
+            fi
             echo "::warning::No MACOS_CERTIFICATE_P12 secret; building an ad-hoc signed app."
             echo "identity=-" >> "$GITHUB_OUTPUT"
             exit 0
@@ -132,7 +175,13 @@ jobs:
         id: notary
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] && { [ -z "$APPLE_API_KEY_P8" ] || [ -z "$APPLE_API_KEY_ID" ] || [ -z "$APPLE_API_ISSUER_ID" ]; }; then
+            echo "::error::Tagged releases require APPLE_API_KEY_P8, APPLE_API_KEY_ID and APPLE_API_ISSUER_ID for notarization."
+            exit 1
+          fi
           if [ -z "$APPLE_API_KEY_P8" ]; then
             echo "path=" >> "$GITHUB_OUTPUT"
             exit 0
@@ -158,7 +207,14 @@ jobs:
         env:
           CODESIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
           VERSION: ${{ steps.version.outputs.value }}
-        run: ./build_scripts/build-app.sh release
+          BUILD_NUMBER: ${{ github.run_number }}
+          SPARKLE_FEED_URL: ${{ startsWith(github.ref, 'refs/tags/v') && vars.SPARKLE_FEED_URL || '' }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ startsWith(github.ref, 'refs/tags/v') && vars.SPARKLE_PUBLIC_ED_KEY || '' }}
+        run: bash build_scripts/build-app.sh release
+
+      - name: Verify bundled MoltenVK 1.4
+        run: |
+          python3 pippinVR-Server/build_scripts/verify-bundle.py pippinVR-Server/PippinVR.app --sdk "$VULKAN_SDK" --smoke
 
       - name: Package Installer
         working-directory: pippinVR-Server
@@ -175,6 +231,30 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/certificate.p12"
           security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
+
+      - name: Generate signed Sparkle appcast
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: pippinVR-Server
+        env:
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          mkdir -p .build/appcast
+          cp "dist/PippinVR-${RELEASE_VERSION}.dmg" .build/appcast/
+          printf '%s' "$SPARKLE_PRIVATE_ED_KEY" |
+            .build/artifacts/sparkle/Sparkle/bin/generate_appcast \
+              --ed-key-file - --maximum-deltas 0 \
+              --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+              -o .build/appcast/appcast.xml .build/appcast
+          test -s .build/appcast/appcast.xml
+
+      - name: Upload Sparkle appcast
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: pippinvr-appcast
+          path: pippinVR-Server/.build/appcast/appcast.xml
+          if-no-files-found: error
 
       - name: Installer Artifact upload
         uses: actions/upload-artifact@v4
@@ -194,6 +274,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: pippinvr-release-publication
+      cancel-in-progress: false
 
     steps:
       - name: Download installer
@@ -209,4 +292,47 @@ jobs:
           name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('Build ({0})', github.ref_name) }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
           files: dist/*.dmg
+          overwrite_files: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          fail_on_unmatched_files: true
           generate_release_notes: true
+
+      - name: Verify published archives match signed feed inputs
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p verified-release
+          for archive in dist/*.dmg; do
+            filename="$(basename "$archive")"
+            gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$filename" --dir verified-release
+            cmp "$archive" "verified-release/$filename"
+          done
+
+      - name: Check out feed branch
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: feed-repo
+
+      - name: Download signed appcast
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/download-artifact@v4
+        with:
+          name: pippinvr-appcast
+          path: generated-feed
+
+      - name: Publish appcast after release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python3 feed-repo/pippinVR-Server/build_scripts/merge-appcast.py \
+            generated-feed/appcast.xml feed-repo/updates/appcast.xml \
+            --repository "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME"
+          git -C feed-repo config user.name 'github-actions[bot]'
+          git -C feed-repo config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C feed-repo add -- updates/appcast.xml
+          if ! git -C feed-repo diff --cached --quiet; then
+            git -C feed-repo commit -m "Update Sparkle appcast for ${GITHUB_REF_NAME} [skip ci]"
+            git -C feed-repo push origin HEAD:main
+          fi

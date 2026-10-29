@@ -12,13 +12,13 @@ enum CameraCaptureError: Error, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case let .deviceNotFound(id): 
+        case let .deviceNotFound(id):
             "AVCaptureDevice not found for ID: \(id)"
-        case let .noVideoInput(reason): 
+        case let .noVideoInput(reason):
             "Could not create video input from device: \(reason)"
-        case let .sessionConfigurationFailed(reason): 
+        case let .sessionConfigurationFailed(reason):
             "Failed to configure capture session: \(reason)"
-        case .permissionDenied: 
+        case .permissionDenied:
             "Camera access permission denied"
         case let .formatConfigurationFailed(reason):
             "Could not configure device format: \(reason)"
@@ -46,7 +46,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         Logger.info("UID: \(device.uniqueID)")
         Logger.info("ModelID: \(device.modelID)")
         Logger.info("DeviceType: \(device.deviceType.rawValue)")
-        
+
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         Logger.info("Camera permission status: \(status.rawValue)")
         switch status {
@@ -61,7 +61,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
                 }
                 Logger.info("Camera access granted")
             case .denied, .restricted:
-                
+
                 Logger.error("Camera access denied or restricted")
                 throw CameraCaptureError.permissionDenied
             @unknown default:
@@ -73,7 +73,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         let session = AVCaptureSession()
 
         let isIOSDevice = device.modelID == "iOS Device"
-        
+
         if !isIOSDevice {
             session.sessionPreset = .high
             Logger.info("Configuring device format")
@@ -107,7 +107,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         }
         Logger.info("Creating AVCaptureVideoDataOutput")
         let output = AVCaptureVideoDataOutput()
-        
+
         if !isIOSDevice {
             Logger.info("Setting video capture format: \(config.pixelFormat)")
             output.videoSettings = [
@@ -116,7 +116,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         } else {
             Logger.warning("Using DAL capture format for iOS device")
         }
-        
+
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: queue)
         Logger.info("Video capture configuration complete")
@@ -142,30 +142,28 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         self.session = nil
     }
 
-    // MARK: AVCaptureVideoDataOutputSampleBufferDelegate
-    
     private var frameCount = 0
     private var firstFrameLogged = false
 
     func captureOutput(_: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from _: AVCaptureConnection) {
-        guard sampleBuffer.isValid else { 
+        guard sampleBuffer.isValid else {
             Logger.warning("Invalid sample buffer recieved")
             return
         }
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { 
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             Logger.warning("Could not find pixel data from sample buffer")
             return
         }
 
         frameCount += 1
-        
+
         if !firstFrameLogged {
             let width = CVPixelBufferGetWidth(pixelBuffer)
             let height = CVPixelBufferGetHeight(pixelBuffer)
             let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
             let formatName = pixelFormatToString(pixelFormat)
-            
+
             Logger.info(
                 """
                    First frame from device: \(device.localizedName) recieved
@@ -176,7 +174,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             )
             firstFrameLogged = true
         }
-        
+
         if frameCount % 60 == 0 {
             Logger.info("\(frameCount) frames captured from \(device.localizedName)")
         }
@@ -191,7 +189,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             Logger.warning("Frame dropped early: #\(frameCount)")
         }
     }
-    
+
     private func pixelFormatToString(_ format: OSType) -> String {
         let chars = [
             UInt8((format >> 24) & 0xFF),
@@ -204,8 +202,6 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         }
         return "unknown"
     }
-
-    // MARK: Private
 
     private func configureDeviceFormat() throws {
         if let format = bestFormat(for: device, desiredWidth: config.width, desiredHeight: config.height) {
@@ -221,7 +217,6 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     }
 
     private func bestFormat(for device: AVCaptureDevice, desiredWidth: Int, desiredHeight: Int) -> AVCaptureDevice.Format? {
-        // Find format with exact resolution match
         let exactMatches = device.formats.filter { format in
             let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
             return dimensions.width == desiredWidth && dimensions.height == desiredHeight

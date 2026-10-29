@@ -81,8 +81,6 @@ enum WireFormat {
     }
 }
 
-// MARK: Helper functions with writing data
-
 extension Data {
     mutating func appendBE(_ v: UInt16) {
         Swift.withUnsafeBytes(of: v.bigEndian) { append(contentsOf: $0) }

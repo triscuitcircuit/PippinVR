@@ -25,7 +25,6 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private let queue = DispatchQueue(label: "pippinvr.capture.output")
 
-    /// Called on the capture queue for every delivered frame.
     var onPixelBuffer: ((CVPixelBuffer, CMTime) -> Void)?
     var onError: ((Error) -> Void)?
 
@@ -70,11 +69,8 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         stream = nil
     }
 
-    // MARK: Stream Output
-
     func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-                of type: SCStreamOutputType)
-    {
+                of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid else { return }
 
         if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer,
@@ -82,8 +78,7 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             as? [[SCStreamFrameInfo: Any]],
             let statusRaw = attachments.first?[.status] as? Int,
             let status = SCFrameStatus(rawValue: statusRaw),
-            status != .complete
-        {
+            status != .complete {
             return
         }
 

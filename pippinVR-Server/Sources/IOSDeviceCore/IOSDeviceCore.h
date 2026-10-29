@@ -22,4 +22,4 @@
 
 @end
 
-#endif // IOS_DEVICE_CORE_H
+#endif

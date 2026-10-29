@@ -4,7 +4,21 @@
 #include "InteractionGeometry.h"
 #include <algorithm>
 using namespace NewtInternal;
-void NewtXR::OnInput(const Newt::InputState& input) {
+
+
+void NewtXR::OnInput(const Newt::InputState& raw) {
+    Newt::InputState input = raw;
+    mHandJoints = input.joints;
+    mHandJointsValid = input.jointsValid;
+    PollRecenterButton();
+    UpdateTracing(input);
+    UpdateCustomPanels(input);
+    UpdateAlerts(input);
+    HandleInput(input);
+    PollSystemAudio();
+}
+
+void NewtXR::HandleInput(const Newt::InputState& input) {
     const auto inputNow = std::chrono::steady_clock::now();
     const float inputDt = mLastInput.time_since_epoch().count() ? std::clamp(std::chrono::duration<float>(inputNow-mLastInput).count(), 0.0f, 0.05f) : 0;
     mLastInput = inputNow;
@@ -21,6 +35,22 @@ void NewtXR::OnInput(const Newt::InputState& input) {
             mRecenterMenu=false;
         }
     }
+    const double clockTime = std::chrono::duration<double>(inputNow.time_since_epoch()).count();
+    for (int hand = 0; hand < 2; ++hand) {
+        mWristGestures[hand].Update(clockTime,
+            mClockSettings.enabled && mClockSettings.AllowsHand(hand) && input.viewerValid && input.handValid[hand] &&
+            WristClockGesture::ValidPose(input.wrist[hand]), input.palm[hand], input.viewer);
+    }
+    if (mClockHand < 0 || !mWristGestures[mClockHand].visible)
+        mClockHand = mWristGestures[0].visible ? 0 : (mWristGestures[1].visible ? 1 : -1);
+    if (mClockHand >= 0) {
+        mClockPose = input.wrist[mClockHand];
+        mClockPose.orientation = input.viewer.orientation;
+        const auto offset = Rotate(input.viewer.orientation, {0, mClockSettings.Offset(), 0.025f});
+        mClockPose.position.x += offset.x;
+        mClockPose.position.y += offset.y;
+        mClockPose.position.z += offset.z;
+    }
     const double rayTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     for (int hand = 0; hand < 2; ++hand) {
         const auto& grab=input.grab[hand];
@@ -35,6 +65,7 @@ void NewtXR::OnInput(const Newt::InputState& input) {
         mRayAlpha[hand] = mRayActivity[hand].Alpha(rayTime);
     }
 
+    UpdateModelPopupCandidate();
     int hoveredRow[2]{ -1, -1 };
     if (mMenuOpen) {
         bool anyCursor = false;
@@ -71,11 +102,31 @@ void NewtXR::OnInput(const Newt::InputState& input) {
         }
         if (sel && !mPrevSelect[i]) {
             if (!mMenuOpen) {
+                int popupModel = -1, popupButton = -1;
+                float popupDistance = 1000.0f;
+                if (mAimValid[i] && ModelPopupHit(mAimPoses[i], popupModel, popupButton, popupDistance) >= 0) {
+                    ActivateModelPopupButton(popupModel, popupButton, i);
+                    mPrevSelect[i] = sel;
+                    continue;
+                }
                 if (mGrabHand>=0) { mPrevSelect[i]=sel; continue; }
-                if (mPage == Page::Screens) {
-                    if (!mPanels.empty()) mActivePanel = (mActivePanel + 1) % mPanels.size();
-                } else if (mPage == Page::Media) {
-                    if (!mPanels.empty()) mActivePanel = (mActivePanel + 1) % mPanels.size();
+                int hitPanel = -1, hitModel = -1;
+                float panelDist = 1000.0f, modelDist = 1000.0f;
+                const bool panelHit = (!mPanels.empty() && mAimValid[i]) && PanelHit(mAimPoses[i], hitPanel, panelDist) >= 0;
+                const bool modelHit = (!mModels.empty() && mAimValid[i]) && ModelHit(mAimPoses[i], hitModel, modelDist) >= 0;
+                if (modelHit && (!panelHit || modelDist < panelDist)) {
+                    mActiveModel = hitModel;
+                } else if (panelHit) {
+                    mActivePanel = hitPanel;
+                } else if (mPage == Page::Screens || mPage == Page::Media) {
+                    if (!mPanels.empty()) {
+
+                        for (size_t step = 0; step < mPanels.size(); ++step) {
+                            mActivePanel = (mActivePanel + 1) % static_cast<int>(mPanels.size());
+                            if (!PanelLocked(mActivePanel)) break;
+                        }
+                    }
+                    if (!mModels.empty()) mActiveModel = (mActiveModel + 1) % mModels.size();
                 } else {
                     mMenuOpen = true;
                 }
@@ -90,72 +141,144 @@ void NewtXR::OnInput(const Newt::InputState& input) {
         const bool menu = input.menu[i];
         if (menu && !mPrevMenu[i]) {
             mMenuOpen = !mMenuOpen;
-            if (mMenuOpen) { mRecenterMenu = true; mGrabHand = -1; mGrabbedPanel = -1; }
+            if (mMenuOpen) { mRecenterMenu = true; mGrabHand = -1; mGrabbedPanel = -1; mGrabbedModel = -1; }
             Newt_Logf(NEWT_LOG_DEBUG, "Menu pressed (hand %d) -> menuOpen=%d", i, static_cast<int>(mMenuOpen));
         }
         mPrevMenu[i] = menu;
     }
 
-    // Two-handed stretch resize: both grips held together resizes width and
-    // height independently, by how the hands' current separation compares
-    // to their separation when the stretch started. Computed before the
-    // single-hand grab loop below so a just-starting two-hand squeeze is
-    // never claimed by hand 0 alone as an ordinary single-hand grab first.
-    const bool bothHeld = !mMenuOpen && !mPanels.empty() &&
+
+
+
+
+
+    const bool bothGripsHeld = !mMenuOpen &&
         input.grab[0].isActive && input.grab[0].currentState > 0.7f && mGripValid[0] &&
         input.grab[1].isActive && input.grab[1].currentState > 0.7f && mGripValid[1];
+    const bool bothHeld = bothGripsHeld && (!mPanels.empty() || !mModels.empty());
     auto localGripOf = [&](const Panel& panel, const XrPosef& p) {
         const auto inverse = Conjugate(panel.pose.orientation);
         return Rotate(inverse, {p.position.x-panel.pose.position.x,
             p.position.y-panel.pose.position.y, p.position.z-panel.pose.position.z});
     };
+    auto handDistance = [&]() {
+        const float dx = mGripPoses[1].position.x - mGripPoses[0].position.x;
+        const float dy = mGripPoses[1].position.y - mGripPoses[0].position.y;
+        const float dz = mGripPoses[1].position.z - mGripPoses[0].position.z;
+        return std::max(0.05f, std::sqrt(dx * dx + dy * dy + dz * dz));
+    };
     if (!mStretchActive && bothHeld) {
-        // Hands rarely cross the grip threshold on the exact same frame, so
-        // whichever hand got there first may have already claimed a
-        // single-hand grab (any panel-body hit does, not just its bar) by
-        // the time the second hand catches up. Two-hand intent wins: once
-        // both are confirmed held, force-release that claim rather than
-        // require it to have never happened.
-        mGrabHand = -1; mGrabbedPanel = -1;
-        Panel& panel = *mPanels[mActivePanel];
-        const Vec3 l0 = localGripOf(panel, mGripPoses[0]), l1 = localGripOf(panel, mGripPoses[1]);
-        mStretchActive = true; mStretchPanel = mActivePanel;
-        mStretchStartWidth = panel.width; mStretchStartHeight = panel.height;
-        mStretchStartDeltaX = std::max(0.05f, std::abs(l1.x - l0.x));
-        mStretchStartDeltaY = std::max(0.05f, std::abs(l1.y - l0.y));
+        int stretchModelIdx = -1;
+        if (!mModels.empty()) {
+            if (mGrabbedModel >= 0 && mGrabbedModel < static_cast<int>(mModels.size())) {
+                stretchModelIdx = mGrabbedModel;
+            } else {
+                for (int h = 0; h < 2; ++h) {
+                    if (!mAimValid[h]) continue;
+                    int hitM = -1, hitP = -1;
+                    float distM = 1000.0f, distP = 1000.0f;
+                    const bool mHit = ModelHit(mAimPoses[h], hitM, distM) >= 0;
+                    const bool pHit = !mPanels.empty() && PanelHit(mAimPoses[h], hitP, distP) >= 0;
+                    if (mHit && (!pHit || distM < distP)) {
+                        stretchModelIdx = hitM;
+                        break;
+                    }
+                }
+                if (stretchModelIdx < 0 && mPanels.empty()) {
+                    stretchModelIdx = mActiveModel;
+                }
+            }
+        }
+        mGrabHand = -1; mGrabbedPanel = -1; mGrabbedModel = -1;
+        mStretchActive = true;
+        if (stretchModelIdx >= 0 && stretchModelIdx < static_cast<int>(mModels.size())) {
+            mActiveModel = stretchModelIdx;
+            mStretchModel = stretchModelIdx;
+            mStretchPanel = -1;
+            mStretchModelStartScale = mModels[stretchModelIdx]->scale;
+            mStretchModelStartDist = handDistance();
+        } else if (!mPanels.empty() && !PanelLocked(mActivePanel)) {
+            mStretchModel = -1;
+            Panel& panel = *mPanels[mActivePanel];
+            const Vec3 l0 = localGripOf(panel, mGripPoses[0]), l1 = localGripOf(panel, mGripPoses[1]);
+            mStretchPanel = mActivePanel;
+            mStretchStartWidth = panel.width; mStretchStartHeight = panel.height;
+            mStretchStartDeltaX = std::max(0.05f, std::abs(l1.x - l0.x));
+            mStretchStartDeltaY = std::max(0.05f, std::abs(l1.y - l0.y));
+        }
         mCore->PulseHaptic(0, 0.5f); mCore->PulseHaptic(1, 0.5f);
     }
     if (mStretchActive) {
-        if (!bothHeld || mStretchPanel < 0 || mStretchPanel >= static_cast<int>(mPanels.size())) {
+        if (!bothHeld) {
             mStretchActive = false;
-        } else {
+            mStretchModel = -1;
+        } else if (mStretchModel >= 0 && mStretchModel < static_cast<int>(mModels.size())) {
+            const float ratio = handDistance() / std::max(0.05f, mStretchModelStartDist);
+            mModels[mStretchModel]->scale = std::clamp(mStretchModelStartScale * ratio, 0.02f, 50.0f);
+        } else if (mStretchModel < 0 && mStretchPanel >= 0 && mStretchPanel < static_cast<int>(mPanels.size())) {
             Panel& panel = *mPanels[mStretchPanel];
             const Vec3 l0 = localGripOf(panel, mGripPoses[0]), l1 = localGripOf(panel, mGripPoses[1]);
             const float dx = std::abs(l1.x - l0.x), dy = std::abs(l1.y - l0.y);
             panel.width = std::clamp(mStretchStartWidth * (dx / mStretchStartDeltaX), 0.4f, 4.0f);
             panel.height = std::clamp(mStretchStartHeight * (dy / mStretchStartDeltaY), 0.25f, 3.0f);
+        } else {
+            mStretchActive = false;
+            mStretchModel = -1;
         }
     }
 
-    // Squeeze and move/rotate the selected panel, preserving its initial controller offset.
+
     for (int hand = 0; hand < 2; ++hand) {
         const auto& state=input.grab[hand];
         const bool held = !mMenuOpen && state.isActive && state.currentState > 0.7f && mGripValid[hand];
-        if (held && !mGrabbing[hand] && !mPanels.empty() && mGrabHand < 0 && !bothHeld) {
-            int picked = -1; float distance = 0;
-            const int zone = mAimValid[hand] ? PanelHit(mAimPoses[hand], picked, distance) : -1;
-            if (picked < 0) { mGrabbing[hand] = held; continue; }
-            mActivePanel = picked;
-            mCore->PulseHaptic(hand, 0.5f); // Confirms the squeeze actually caught a panel.
+        if (held && !mGrabbing[hand] && mAimValid[hand]) {
+            int popupModel = -1, popupButton = -1;
+            float popupDistance = 1000.0f;
+            if (ModelPopupHit(mAimPoses[hand], popupModel, popupButton, popupDistance) != -1 && popupModel >= 0) {
+                mGrabbing[hand] = held;
+                continue;
+            }
+        }
+        if (held && !mGrabbing[hand] && (!mPanels.empty() || !mModels.empty()) && mGrabHand < 0 && !bothHeld) {
+            int pickedPanel = -1, pickedModel = -1;
+            float panelDist = 1000.0f, modelDist = 1000.0f;
+            const int zone = (!mPanels.empty() && mAimValid[hand]) ? PanelHit(mAimPoses[hand], pickedPanel, panelDist) : -1;
+            const int mZone = (!mModels.empty() && mAimValid[hand]) ? ModelHit(mAimPoses[hand], pickedModel, modelDist) : -1;
+            const bool grabModel = (mZone >= 0 && (pickedPanel < 0 || modelDist < panelDist)) ||
+                                   (pickedPanel < 0 && pickedModel < 0 && !mModels.empty());
+            if (grabModel) {
+                const int targetModel = pickedModel >= 0 ? pickedModel : mActiveModel;
+                mActiveModel = targetModel;
+                mCore->PulseHaptic(hand, 0.5f);
+                mGrabZone = 1;
+                mGrabHand = hand;
+                mGrabbedPanel = -1;
+                mGrabbedModel = targetModel;
+                const auto& pose = mModels[targetModel]->pose;
+                const auto& grip = mGripPoses[hand];
+                const Vec3 offset = Rotate(Conjugate(grip.orientation),
+                    Vec3{pose.position.x - grip.position.x, pose.position.y - grip.position.y, pose.position.z - grip.position.z});
+                mGrabOffsets[hand].position = {offset.x, offset.y, offset.z};
+                mGrabOffsets[hand].orientation = QuaternionProduct(Conjugate(grip.orientation), pose.orientation);
+                mGrabbing[hand] = held;
+                continue;
+            }
+            if (pickedPanel < 0) {
+                mGrabbing[hand] = held;
+                continue;
+            }
+            mActivePanel = pickedPanel;
+            mCore->PulseHaptic(hand, 0.5f);
             if (zone == 2) {
-                auto& pose = mPanels[picked]->pose;
+                auto& pose = mPanels[pickedPanel]->pose;
                 const float yaw = std::atan2(mViewerPose.position.x-pose.position.x, mViewerPose.position.z-pose.position.z);
                 pose.orientation = {0,std::sin(yaw/2),0,std::cos(yaw/2)};
                 mGrabbing[hand] = held; continue;
             }
             mGrabZone = zone;
             mGrabHand = hand;
-            mGrabbedPanel = picked;
+            mGrabbedPanel = pickedPanel;
+            mGrabbedModel = -1;
             const auto& pose = mPanels[mGrabbedPanel]->pose;
             const auto& grip = mGripPoses[hand];
             const Vec3 offset = Rotate(Conjugate(grip.orientation),
@@ -163,7 +286,46 @@ void NewtXR::OnInput(const Newt::InputState& input) {
             mGrabOffsets[hand].position = {offset.x, offset.y, offset.z};
             mGrabOffsets[hand].orientation = QuaternionProduct(Conjugate(grip.orientation), pose.orientation);
         }
-        if (held && mGrabHand == hand && mGrabbedPanel >= 0) {
+        if (held && mGrabHand == hand && mGrabbedModel >= 0 && mGrabbedModel < static_cast<int>(mModels.size())) {
+            auto& model = *mModels[mGrabbedModel];
+            auto& pose = model.pose;
+            const auto& grip = mGripPoses[hand];
+            auto& offset = mGrabOffsets[hand];
+            const auto& stick = input.stick[hand];
+            if (stick.isActive) {
+                if (input.select[hand]) {
+
+                    if (std::abs(stick.currentState.y) > 0.2f) {
+                        const float factor = 1.0f + stick.currentState.y * inputDt * 1.5f;
+                        model.scale = std::clamp(model.scale * std::max(0.2f, factor), 0.02f, 50.0f);
+                    }
+                } else {
+                    if (std::abs(stick.currentState.x) > 0.2f) {
+                        const float angle = -stick.currentState.x * inputDt * 1.5f;
+                        const XrQuaternionf yaw{0, std::sin(angle / 2), 0, std::cos(angle / 2)};
+                        offset.orientation = QuaternionProduct(Conjugate(grip.orientation),
+                            QuaternionProduct(yaw, QuaternionProduct(grip.orientation, offset.orientation)));
+                    }
+                    if (std::abs(stick.currentState.y) > 0.2f) {
+                        const float length = std::sqrt(offset.position.x * offset.position.x +
+                                                       offset.position.y * offset.position.y +
+                                                       offset.position.z * offset.position.z);
+                        if (length > 0.001f) {
+                            const float raw = length + stick.currentState.y * inputDt * 2.0f;
+                            const float clamped = std::clamp(raw, 0.2f, 25.0f);
+                            if (clamped != raw) mCore->PulseHaptic(hand);
+                            const float s = clamped / length;
+                            offset.position.x *= s;
+                            offset.position.y *= s;
+                            offset.position.z *= s;
+                        }
+                    }
+                }
+            }
+            const Vec3 delta = Rotate(grip.orientation, {offset.position.x, offset.position.y, offset.position.z});
+            pose.position = {grip.position.x + delta.x, grip.position.y + delta.y, grip.position.z + delta.z};
+            pose.orientation = QuaternionProduct(grip.orientation, offset.orientation);
+        } else if (held && mGrabHand == hand && mGrabbedPanel >= 0) {
             auto& pose = mPanels[mGrabbedPanel]->pose;
             const auto& grip = mGripPoses[hand];
             auto& offset = mGrabOffsets[hand];
@@ -177,7 +339,7 @@ void NewtXR::OnInput(const Newt::InputState& input) {
                         if (panel.curvature!=raw) mCore->PulseHaptic(hand);
                     }
                     mGrabbing[hand]=held;
-                    continue; // Curvature gesture keeps the screen stationary.
+                    continue;
                 }
                 if (stick.isActive) {
                     if (std::abs(stick.currentState.x)>0.2f) {
@@ -207,11 +369,11 @@ void NewtXR::OnInput(const Newt::InputState& input) {
                 pose.orientation = QuaternionProduct(grip.orientation, offset.orientation);
             }
         }
-        if (!held && mGrabHand == hand) { mGrabHand = -1; mGrabbedPanel = -1; }
+        if (!held && mGrabHand == hand) { mGrabHand = -1; mGrabbedPanel = -1; mGrabbedModel = -1; }
         mGrabbing[hand] = held;
     }
 
-    if (!mMenuOpen && !mPanels.empty() && mGrabHand < 0 && !mStretchActive) {
+    if (!mMenuOpen && !mPanels.empty() && mGrabHand < 0 && !mStretchActive && !PanelLocked(mActivePanel)) {
         Panel& panel = *mPanels[mActivePanel];
         const auto now = std::chrono::steady_clock::now();
         const float dt = mLastAdjust.time_since_epoch().count() == 0 ? 0.0f :
@@ -230,9 +392,9 @@ void NewtXR::OnInput(const Newt::InputState& input) {
             } else {
                 const float rawWidth = panel.width + x * dt;
                 const float newWidth = std::clamp(rawWidth, 0.4f, 4.0f);
-                // Uniform scale, preserving whatever aspect the panel
-                // currently has -- independent width/height is the two-
-                // handed stretch gesture's job, not this one's.
+
+
+
                 if (panel.width > 0.0001f) panel.height *= newWidth / panel.width;
                 panel.width = newWidth;
                 const float rawZ = panel.pose.position.z - y * dt;
@@ -242,7 +404,7 @@ void NewtXR::OnInput(const Newt::InputState& input) {
         }
     } else { mLastAdjust = {}; }
 
-    // Thumbstick up/down/left/right moves the menu selection (debounced).
+
     const auto now = std::chrono::steady_clock::now();
     if (mMenuOpen && now - mLastNav > std::chrono::milliseconds(250)) {
         for (int i = 0; i < 2; ++i) {
@@ -262,4 +424,5 @@ void NewtXR::OnInput(const Newt::InputState& input) {
             }
         }
     }
+    UpdatePassthroughAnchor(input);
 }

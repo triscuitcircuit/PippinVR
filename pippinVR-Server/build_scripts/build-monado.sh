@@ -12,6 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPPIN_SERVER_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 
 THIRD_PARTY_DIR="${PIPPIN_SERVER_DIR}/third_party"
 OPENXR_SRC_DIR="${THIRD_PARTY_DIR}/openxr-sdk"
@@ -72,6 +73,7 @@ cmake -S "${OPENXR_SRC_DIR}" -B "${OPENXR_BUILD_DIR}" \
     -DPython3_EXECUTABLE=/usr/bin/python3 \
     -DPYTHON_EXECUTABLE=/usr/bin/python3 \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}" \
     -DDYNAMIC_LOADER=ON \
     -DBUILD_LOADER=ON \
     -DBUILD_API_LAYERS=OFF \
@@ -80,9 +82,9 @@ cmake -S "${OPENXR_SRC_DIR}" -B "${OPENXR_BUILD_DIR}" \
     -DBUILD_WITH_SYSTEM_JSONCPP=OFF
 /usr/bin/make -C "${OPENXR_BUILD_DIR}" -j8 openxr_loader
 
-GLSLANGVALIDATOR_COMMAND="${GLSLANGVALIDATOR_COMMAND:-$(command -v glslangValidator || true)}"
-if [ -z "${GLSLANGVALIDATOR_COMMAND}" ]; then
-    echo "error: glslangValidator not found on PATH (brew install glslang)." >&2
+GLSLANGVALIDATOR_COMMAND="${GLSLANGVALIDATOR_COMMAND:-${VULKAN_SDK}/bin/glslangValidator}"
+if [ ! -x "${GLSLANGVALIDATOR_COMMAND}" ]; then
+    echo "error: shader compiler not executable: ${GLSLANGVALIDATOR_COMMAND}" >&2
     exit 1
 fi
 
@@ -96,6 +98,7 @@ cmake -S "${MONADO_SRC_DIR}" -B "${MONADO_BUILD_DIR}" \
     -DPYTHON_EXECUTABLE=/usr/bin/python3 \
     -DGLSLANGVALIDATOR_COMMAND="${GLSLANGVALIDATOR_COMMAND}" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}" \
     -DCMAKE_C_FLAGS="${EXTRA_INCLUDES}" \
     -DCMAKE_CXX_FLAGS="${EXTRA_INCLUDES}" \
     -DEIGEN3_INCLUDE_DIR="${EIGEN_DIR}" \

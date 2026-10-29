@@ -6,8 +6,14 @@
 #include <csignal>
 #include <cstring>
 #include "SystemCheck.h"
+#include "Metrics.h"
+#include "HandBenchmark.h"
 using namespace NewtInternal;
 void NewtXR::Run() {
+    LoadMetalFXSettings();
+    mClockSettings = LoadWristClockSettings();
+    mPassthrough = LoadPassthroughSettings();
+    if (const char* value = std::getenv("NEWT_WRIST_CLOCK")) mClockSettings.enabled = std::strcmp(value, "0") != 0;
     auto raySetting = [](const char* key, double fallback, double min, double max) {
         const char* raw = std::getenv(key);
         if (!raw) return fallback;
@@ -19,6 +25,12 @@ void NewtXR::Run() {
         ray.idleSeconds = raySetting("NEWT_RAY_IDLE_SECONDS", 2, 0, 60);
         ray.wakeDistanceMeters = raySetting("NEWT_RAY_WAKE_METERS", 0.02, 0.001, 0.5);
         ray.wakeAngleDegrees = raySetting("NEWT_RAY_WAKE_DEGREES", 3, 0.1, 90);
+    }
+    if (const char* value = std::getenv("NEWT_METRICS")) {
+        mShowMetrics = std::strcmp(value, "0") != 0;
+    }
+    if (const char* value = std::getenv("QL_METRICS_FILE")) {
+        mMetricsFilePath = value;
     }
     if (const char* value = std::getenv("NEWT_CAPTURE_FPS")) {
         const int fps = std::atoi(value);
@@ -44,12 +56,20 @@ void NewtXR::Run() {
     mCore->Run(*this);
 }
 void NewtXR::OnReady(Newt::Session&) {
+    HandBenchmarkStart(mPassthrough.allowed);
     CreateRenderAssets();
     AddPanel(false,0);
+    if (mPassthrough.enabled) SetPassthroughShown(true);
+    else if (CameraHandsActive() || HandBenchmarkNeedsFrames()) UpdateCameraRequest();
+    RestoreScene();
 }
 bool NewtXR::OnTick(Newt::Session& session) {
     if (mFadeAlpha >= 1.0f) return false;
     ApplyCommands();
+    if (HandBenchmarkEnabled()) {
+        HandBenchmarkTick();
+        UpdateCameraRequest();
+    }
     if(gQuitRequested.load()) return false;
     if(gFadeRequested.load()) {
         if(!session.Running()) return false;
@@ -61,32 +81,81 @@ bool NewtXR::OnTick(Newt::Session& session) {
 void NewtXR::OnSessionState(XrSessionState state) {
     SetMediaVolume(state==XR_SESSION_STATE_FOCUSED?mMediaVolume:0);
     if(state!=XR_SESSION_STATE_FOCUSED) {
-        mGrabHand=-1; mGrabbedPanel=-1; mGrabbing={false,false};
+        mClockHand = -1;
+        for (auto& gesture : mWristGestures) gesture.Reset();
+        mGrabHand=-1; mGrabbedPanel=-1; mGrabbedModel=-1; mGrabbing={false,false};
+        mModelPopupModel=-1; mModelPopupHoveredButton=-1;
+        mStretchActive=false; mStretchPanel=-1; mStretchModel=-1;
         mPrevSelect={false,false};mPrevMenu={false,false};mLastInput={};
         mAimValid={false,false};mGripValid={false,false};
     }
 }
 void NewtXR::OnStopping(Newt::Session&) noexcept {
+    HandBenchmarkStop();
+    SaveSceneIfChanged(true);
+    mSceneRestored = false;
+    if (const int portal = PassthroughPanel(); portal >= 0) {
+        StorePassthroughPlacement(*mPanels[portal]);
+        SavePassthroughSettings(mPassthrough);
+    }
+    ReleasePassthroughRuntime();
+    ReleaseRecenterRuntime();
+    ReleaseSystemAudio();
     for (auto& panel : mPanels) {
         if (panel->screen) panel->screen->Stop();
         if (panel->camera) panel->camera->Stop();
     }
 
     if (mCore->Device() != VK_NULL_HANDLE) vkDeviceWaitIdle(mCore->Device());
+    mHandBenchmarkImages[0].reset();
+    mHandBenchmarkImages[1].reset();
+    mCore->DestroyTexture(mHandBenchmarkStatus);
+    mHandBenchmarkPreviewSequence = 0;
 
     for(auto& t:mButtonTextures) mCore->DestroyTexture(t);
     mCore->DestroyTexture(mMenuTexture);
+    mCore->DestroyTexture(mModelPopupTexture);
+    mCore->DestroyTexture(mMetricsTexture);
+    mCore->DestroyTexture(mWristClockTexture);
+    mCore->DestroyTexture(mTraceTexture);
+    mTraceRenderedPrompt.clear();
+    mPassthrough.tracing = false;
     mCore->DestroyTexture(mLogoTexture);
     mCore->DestroyTexture(mBarTexture);
     mCore->DestroyBuffer(mDockBuffer);
     for(auto& b:mButtonFaces) mCore->DestroyBuffer(b);
     for(auto& b:mButtonBodies) mCore->DestroyBuffer(b);
-    for (auto& panel : mPanels) { mCore->DestroyTexture(panel->texture); mCore->DestroyTexture(panel->badgeTexture); panel->gpuTexture.reset(); for(auto& b:panel->meshes) mCore->DestroyBuffer(b); }
+    for (auto& panel : mPanels) {
+        mCore->DestroyTexture(panel->texture);
+        mCore->DestroyTexture(panel->badgeTexture);
+        panel->gpuTexture.reset();
+        panel->gpuTextureRight.reset();
+        for(auto& b:panel->meshes) mCore->DestroyBuffer(b);
+        for(auto& b:panel->lensMeshes) mCore->DestroyBuffer(b);
+    }
     mPanels.clear();
+    if (mHasEnvironment) {
+        mCore->DestroyTexture(mEnvironmentTexture);
+        mHasEnvironment = false;
+    }
+    mCore->DestroyBuffer(mEnvironmentMesh);
+    mEnvironmentMeshCount = 0;
+    mEnvironmentPath.clear();
+    mEnvironmentFlipV = mEnvironmentFlipH = false;
+    ClearEnvironmentModel();
+    for (auto& alert : mAlerts) mCore->DestroyTexture(alert.texture);
+    mAlerts.clear();
+    for (auto& panel : mCustomPanels) mCore->DestroyTexture(panel.texture);
+    mCustomPanels.clear();
+    mCore->DestroyTexture(mRecenterRingTexture);
+    mAlertDrag = {-1, -1};
     mCore->DestroyTexture(mContentTexture);
     mCore->DestroyBuffer(mCubeBuffer);
     mCore->DestroyBuffer(mGridBuffer);
     mCore->DestroyBuffer(mRayBuffer);
+    mCore->DestroyBuffer(mHandTube);
+    mCore->DestroyBuffer(mHandBall);
+    mHandTubeCount = mHandBallCount = 0;
 
 }
 

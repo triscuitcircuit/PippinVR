@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, screens, quality, apps, cameras, device, appearance, transport, environment
+    case general, screens, quality, apps, cameras, device, appearance, transport, environment, performance
 
     var id: String { rawValue }
 
@@ -18,6 +18,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .appearance: return "Appearance"
         case .transport: return "Transport"
         case .environment: return "Environment"
+        case .performance: return "Performance"
         }
     }
 
@@ -32,16 +33,17 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .appearance: return "paintpalette"
         case .transport: return "cable.connector"
         case .environment: return "globe"
+        case .performance: return "gauge"
         }
     }
 }
 
 private let tintOptions: [Color] = [
-    Color(red: 0.04, green: 0.52, blue: 1.0),   // blue
-    Color(red: 0.69, green: 0.32, blue: 0.87),  // purple
-    Color(red: 1.0, green: 0.22, blue: 0.37),   // pink
-    Color(red: 1.0, green: 0.62, blue: 0.04),   // orange
-    Color(red: 0.19, green: 0.82, blue: 0.35)   // green
+    Color(red: 0.04, green: 0.52, blue: 1.0),
+    Color(red: 0.69, green: 0.32, blue: 0.87),
+    Color(red: 1.0, green: 0.22, blue: 0.37),
+    Color(red: 1.0, green: 0.62, blue: 0.04),
+    Color(red: 0.19, green: 0.82, blue: 0.35)
 ]
 
 struct SettingsView: View {
@@ -57,6 +59,7 @@ struct SettingsView: View {
     @State private var isApplying = false
     @StateObject private var deviceManager = CaptureDeviceManager()
     @State private var showDirectUSBPrompt = false
+    @State private var startupMode = StartupPreferences.mode
 
     @State private var wireSpeedMbps: Double = 0
     @State private var discoveredPeakMbps: Double = 0
@@ -100,6 +103,7 @@ struct SettingsView: View {
                         case .appearance: appearancePanel
                         case .transport: transportPanel
                         case .environment: environmentPanel
+                        case .performance: performancePanel
                         }
                     }
                     .padding(.horizontal, 30)
@@ -193,8 +197,6 @@ struct SettingsView: View {
         .background(Color(nsColor: .underPageBackgroundColor).opacity(0.5))
     }
 
-    // MARK: General
-
     private var generalPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
             SettingsGroup {
@@ -219,6 +221,59 @@ struct SettingsView: View {
                 }
             }
 
+            if let directController {
+                SettingsGroup {
+                    SettingRow("Wrist clock", help: "Turn either palm toward your face to show the time.") {
+                        Toggle("Wrist clock", isOn: Binding(
+                            get: { directController.wristClockEnabled },
+                            set: { directController.setWristClockEnabled($0) })).labelsHidden()
+                    }
+                }
+                Text("The wrist clock requires hand tracking enabled on the headset and available through the connected runtime. Hold your palm toward your face briefly; turn it away to hide the clock.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                SettingsGroup {
+                    SettingRow("Headset sound", help: "Your Mac's sound in the headset. HRTF places it at the screen you're using, so it stays there as you turn your head.") {
+                        Picker("Headset sound", selection: Binding(
+                            get: { directController.audioMode },
+                            set: { directController.setAudioMode($0) })) {
+                            ForEach(DirectAudioPreferences.Mode.allCases) { Text($0.title).tag($0) }
+                        }.labelsHidden().fixedSize()
+                    }
+                    SettingRow("Also play on Mac", help: "Off: the Mac's speakers go quiet while the headset has the sound.", showsDivider: false) {
+                        Toggle("Also play on Mac", isOn: Binding(
+                            get: { directController.audioMacSpeakers },
+                            set: { directController.setAudioMacSpeakers($0) })).labelsHidden()
+                            .disabled(directController.audioMode == .off)
+                    }
+                }
+                Text("Also switchable in the headset under Settings › Appearance › Sound. Muting the Mac needs macOS 14.2 or later and the system audio recording permission; without them the Mac keeps playing too.")
+                    .font(.caption).foregroundColor(.secondary)
+                if let status = directController.audioStatus {
+                    Text(status).font(.caption).foregroundColor(status.contains("keeps playing.") ? .orange : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                SettingsGroup {
+                    SettingRow("Headset camera access",
+                               help: "Off by default. Lets PippinVR show your headset's passthrough cameras in VR.") {
+                        Toggle("Headset camera access", isOn: Binding(
+                            get: { directController.passthroughAllowed },
+                            set: { directController.setPassthroughAllowed($0) })).labelsHidden()
+                    }
+                    SettingRow("Passthrough portal", showsDivider: false) {
+                        Toggle("Passthrough portal", isOn: Binding(
+                            get: { directController.passthroughEnabled },
+                            set: { directController.setPassthroughEnabled($0) })).labelsHidden()
+                            .disabled(!directController.passthroughAllowed)
+                    }
+                }
+                Text(ProcessInfo.processInfo.environment["PIPPIN_HAND_BENCHMARK"] == "1"
+                     ? "During the hand benchmark, headset camera video also appears in the Mac preview window. Nothing is recorded or saved. Changes to camera access apply from the next headset session."
+                     : "The portal is a movable window showing your room, also switchable in the headset under Settings › Passthrough. Grab its bar to move it; squeeze both grips to stretch it. Camera video is shown only in your headset and never recorded or saved. Changes to camera access apply from the next headset session.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+
             if let questSession {
                 Text("Wire Protocol")
                 .font(.system(size: 13, weight: .semibold))
@@ -238,8 +293,6 @@ struct SettingsView: View {
     private var configPath: String? {
         questSession?.configPath ?? directController?.configPath
     }
-
-    // MARK: Transport
 
     private var transportPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -267,67 +320,42 @@ struct SettingsView: View {
                 }
             }
 
-            Text("Switching relaunches PippinVR in the other mode and this window closes automatically.")
+            SettingsGroup {
+                SettingRow("Start PippinVR in",
+                    help: "When opened from the Dock or Finder. Direct USB connects to the headset right away.",
+                    showsDivider: false) {
+                    Picker("", selection: $startupMode) {
+                        ForEach(StartupMode.allCases) { mode in Text(mode.title).tag(mode) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                    .onChange(of: startupMode) { StartupPreferences.mode = $0 }
+                }
+            }
+
+            Text("Switching relaunches PippinVR in the other mode and this window closes automatically. "
+                + "The start-up choice applies the next time PippinVR is opened.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
     }
 
-    // MARK: Environment
-
+    @ViewBuilder
     private var environmentPanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let directController {
-                SettingsGroup {
-                    SettingRow("360° panorama", showsDivider: directController.environmentImageURL != nil) {
-                        Button(directController.environmentImageURL == nil ? "Choose…" : "Change…") {
-                            directController.chooseEnvironmentImage(); tick.toggle()
-                        }
-                    }
-                    if directController.environmentImageURL != nil {
-                        SettingRow("Flip vertically", showsDivider: true) {
-                            Toggle("", isOn: Binding(
-                                get: { directController.environmentFlippedVertically },
-                                set: { _ in directController.toggleEnvironmentFlipVertical(); tick.toggle() }
-                            )).labelsHidden()
-                        }
-                        SettingRow("Flip horizontally", showsDivider: true) {
-                            Toggle("", isOn: Binding(
-                                get: { directController.environmentFlippedHorizontally },
-                                set: { _ in directController.toggleEnvironmentFlipHorizontal(); tick.toggle() }
-                            )).labelsHidden()
-                        }
-                        SettingRow("Clear", showsDivider: false) {
-                            Button("Remove") { directController.clearEnvironmentImage(); tick.toggle() }
-                        }
-                    }
-                }
+        if let directController {
+            DirectEnvironmentSettingsPanel(controller: directController)
+        } else {
+            inactiveModeNote("Direct USB", "lets you set a 360° panoramic background image and add 3D models")
+        }
+    }
 
-                if let url = directController.environmentImageURL, let nsImage = NSImage(contentsOf: url) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Preview").font(.caption).foregroundColor(.secondary)
-                        Image(nsImage: nsImage)
-                            .resizable().scaledToFit()
-                            .scaleEffect(
-                                x: directController.environmentFlippedHorizontally ? -1 : 1,
-                                y: directController.environmentFlippedVertically ? -1 : 1
-                            )
-                            .frame(maxWidth: 420, maxHeight: 210)
-                            .clipped()
-                            .background(Color.black.opacity(0.2))
-                            .cornerRadius(6)
-                        Text("Approximates the flip — the real wraparound only renders in VR.")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                Text("Replaces the headset dashboard's own background while a panorama is set.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else {
-                inactiveModeNote("Direct USB", "lets you set a 360° panoramic background image")
-            }
+    @ViewBuilder
+    private var performancePanel: some View {
+        if let directController {
+            DirectPerformancePanel(controller: directController, metrics: directController.metricsStore)
+        } else {
+            inactiveModeNote("Direct USB", "shows live Quest Link encode, Newt frame, decode, and MetalFX metrics")
         }
     }
 
@@ -373,14 +401,12 @@ struct SettingsView: View {
         return counts.max(by: { $0.value < $1.value })?.key ?? 0
     }
 
-    // MARK: Screens
-
     private var screensPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let questSession {
                 questScreens(questSession)
                 if directController == nil {
-                    inactiveModeNote("Direct USB", "adds screens from the headset's dock menu up to 6 panels, each independently positioned and resized in VR.")
+                    inactiveModeNote("Direct USB", "adds screens from the headset's dock menu up to \(DirectStatusItemController.panelLimit) panels, each independently positioned and resized in VR.")
                 }
             }
             if let directController {
@@ -490,7 +516,7 @@ struct SettingsView: View {
                 .multilineTextAlignment(.trailing)
             directControl(controller, "Add Screen", prominent: true)
         }
-        Text(controller.running ? "\(controller.panelCount) of 6 panels in this session" : "Connect USB Direct from the menu bar to add screens and feeds.")
+        Text(controller.running ? "\(controller.panelCount) of \(controller.maxPanels) panels in this session" : "Connect USB Direct from the menu bar to add screens and feeds.")
             .foregroundStyle(.secondary)
         directControl(controller, "Add Existing Screen")
         directControl(controller, "Add Camera Feed")
@@ -507,8 +533,6 @@ struct SettingsView: View {
         Text("Trigger selects the next panel. With the dashboard hidden, use the left stick to move it and the right stick to resize or change distance. Hold squeeze to grab and rotate.")
             .foregroundStyle(.secondary)
     }
-
-    // MARK: Quality
 
     private var qualityPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -572,8 +596,6 @@ struct SettingsView: View {
             .foregroundStyle(.secondary)
     }
 
-    // MARK: Apps
-
     private var appsPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let directController {
@@ -608,8 +630,6 @@ struct SettingsView: View {
             }
         }
     }
-
-    // MARK: Cameras
 
     private var camerasPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -660,8 +680,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Device
-
     private var devicePanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             Section {
@@ -688,8 +706,6 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
         }
     }
-
-    // MARK: Appearance (mode-agnostic)
 
     private var appearancePanel: some View {
         SettingsGroup {
@@ -732,8 +748,6 @@ struct SettingsView: View {
             }
         }
     }
-
-    // MARK: Helpers
 
     @ViewBuilder
     private func inactiveModeNote(_ mode: String, _ text: String) -> some View {
@@ -855,6 +869,313 @@ struct SettingsView: View {
     }
 }
 
+private struct DirectEnvironmentSettingsPanel: View {
+    @ObservedObject var controller: DirectStatusItemController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SettingsGroup {
+                SettingRow("360° panorama", showsDivider: controller.environmentImageURL != nil) {
+                    Button(controller.environmentImageURL == nil ? "Choose…" : "Change…") {
+                        controller.chooseEnvironmentImage()
+                    }
+                    .disabled(!controller.running)
+                }
+                if controller.environmentImageURL != nil {
+                    SettingRow("Flip vertically", showsDivider: true) {
+                        Toggle("", isOn: Binding(
+                            get: { controller.environmentFlippedVertically },
+                            set: { controller.setEnvironmentFlipVertical($0) }
+                        )).labelsHidden()
+                    }
+                    SettingRow("Flip horizontally", showsDivider: true) {
+                        Toggle("", isOn: Binding(
+                            get: { controller.environmentFlippedHorizontally },
+                            set: { controller.setEnvironmentFlipHorizontal($0) }
+                        )).labelsHidden()
+                    }
+                }
+                if controller.environmentImageURL != nil || controller.hasEnvironmentModel {
+                    SettingRow("Clear environment", showsDivider: false) {
+                        Button("Remove All", role: .destructive) {
+                            controller.clearEnvironmentImage()
+                        }
+                    }
+                }
+            }
+
+            if let url = controller.environmentImageURL, let nsImage = NSImage(contentsOf: url) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Preview").font(.caption).foregroundColor(.secondary)
+                    Image(nsImage: nsImage)
+                        .resizable().scaledToFit()
+                        .scaleEffect(
+                            x: controller.environmentFlippedHorizontally ? -1 : 1,
+                            y: controller.environmentFlippedVertically ? -1 : 1
+                        )
+                        .frame(maxWidth: 420, maxHeight: 210)
+                        .clipped()
+                        .background(Color.black.opacity(0.2))
+                        .cornerRadius(6)
+                    Text("Approximates the flip — the real wraparound only renders in VR.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            SettingsGroup {
+                SettingRow("3D models",
+                           help: "USDZ, OBJ, glTF, or GLB. Added models also get controls on the model in VR.",
+                           showsDivider: controller.hasEnvironmentModel) {
+                    Button("Add…") { controller.chooseEnvironmentModel() }
+                        .disabled(!controller.running)
+                }
+                if controller.hasEnvironmentModel {
+                    ForEach(controller.environmentModelURLs, id: \.self) { url in
+                        HStack(spacing: 8) {
+                            Image(systemName: "cube.transparent")
+                                .foregroundColor(.secondary)
+                            Text(url.lastPathComponent)
+                                .font(.system(size: 12))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                    }
+                    SettingRow("Selected model scale", showsDivider: true) {
+                        HStack(spacing: 8) {
+                            Button("Smaller") { controller.scaleSelectedEnvironmentModel(up: false) }
+                            Button("Larger") { controller.scaleSelectedEnvironmentModel(up: true) }
+                        }
+                        .disabled(!controller.running)
+                    }
+                    SettingRow("Selected model rotation", showsDivider: true) {
+                        Button("Rotate 45°") { controller.rotateSelectedEnvironmentModel() }
+                            .disabled(!controller.running)
+                    }
+                    SettingRow("Selected model position", showsDivider: true) {
+                        Button("Room / In Front") { controller.toggleSelectedEnvironmentModelPosition() }
+                            .disabled(!controller.running)
+                    }
+                    SettingRow("Selected model", showsDivider: false) {
+                        Button("Remove", role: .destructive) {
+                            controller.removeSelectedEnvironmentModel()
+                        }
+                        .disabled(!controller.running)
+                    }
+                }
+            }
+
+            Text("The panorama replaces the dashboard background. In VR, aim at a model to select it; squeeze to move/rotate it and use two grips to scale it.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+}
+
+private struct DirectMetricsLineGraph: View {
+    struct Point {
+        let date: Date
+        let value: Double
+    }
+    struct Series {
+        let name: String
+        let color: Color
+        let points: [Point]
+    }
+
+    let series: [Series]
+    let now: Date
+    let budgetMs: Double?
+    private let window: TimeInterval = 60
+
+    private var maxValue: Double {
+        let peak = series.flatMap(\.points)
+            .filter { now.timeIntervalSince($0.date) <= window && $0.value.isFinite }
+            .map(\.value).max() ?? 0
+        return max(10, ceil(max(peak, budgetMs ?? 0) / 5) * 5)
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(alignment: .top, spacing: 6) {
+                VStack {
+                    Text("\(Int(maxValue)) ms")
+                    Spacer()
+                    Text("0")
+                }
+                .font(.caption2).foregroundColor(.secondary).frame(width: 42, height: 150, alignment: .trailing)
+                Canvas { context, size in
+                    for step in 0...4 {
+                        let y = size.height * Double(step) / 4.0
+                        var grid = Path()
+                        grid.move(to: CGPoint(x: 0, y: y))
+                        grid.addLine(to: CGPoint(x: size.width, y: y))
+                        context.stroke(grid, with: .color(.secondary.opacity(0.18)), lineWidth: 1)
+                    }
+                    if let budgetMs, budgetMs > 0 {
+                        let y = size.height * (1 - budgetMs / maxValue)
+                        var budget = Path()
+                        budget.move(to: CGPoint(x: 0, y: y))
+                        budget.addLine(to: CGPoint(x: size.width, y: y))
+                        context.stroke(budget, with: .color(.secondary), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    }
+                    for item in series {
+                        var path = Path()
+                        var previous: Date?
+                        for point in item.points where point.value.isFinite && point.value >= 0 {
+                            let age = now.timeIntervalSince(point.date)
+                            guard age >= 0 && age <= window else { continue }
+                            let position = CGPoint(x: size.width * (1 - age / window),
+                                                   y: size.height * (1 - point.value / maxValue))
+                            if let previous, point.date.timeIntervalSince(previous) < 5 {
+                                path.addLine(to: position)
+                            } else {
+                                path.move(to: position)
+                            }
+                            previous = point.date
+                            context.fill(Path(ellipseIn: CGRect(x: position.x - 1.5, y: position.y - 1.5,
+                                                                 width: 3, height: 3)), with: .color(item.color))
+                        }
+                        context.stroke(path, with: .color(item.color), lineWidth: 1.8)
+                    }
+                }
+                .frame(height: 150)
+                .background(Color.black.opacity(0.12))
+                .cornerRadius(8)
+                .accessibilityLabel("Frame timing over the last 60 seconds, in milliseconds")
+            }
+            HStack {
+                Text("60 seconds ago")
+                Spacer()
+                Text("Now")
+            }.font(.caption2).foregroundColor(.secondary).padding(.leading, 48)
+        }
+    }
+}
+
+private struct DirectPerformancePanel: View {
+    @ObservedObject var controller: DirectStatusItemController
+    @ObservedObject var metrics: DirectMetricsStore
+
+    private func ms(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "—" }
+        return String(format: "%.2f ms", value)
+    }
+
+    private func isLive(_ date: Date?, now: Date) -> Bool {
+        guard controller.running, let date else { return false }
+        return now.timeIntervalSince(date) < 5
+    }
+
+    private func metric(_ title: String, value: String, detail: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption).foregroundColor(.secondary)
+            Text(value).font(.system(size: 24, weight: .semibold, design: .rounded))
+                .monospacedDigit().foregroundColor(color)
+            Text(detail).font(.caption2).foregroundColor(.secondary)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            let now = timeline.date
+            let latestEncode = metrics.encodeSamples.last
+            let latestNewt = metrics.newtSamples.last
+            let encodeLive = isLive(latestEncode?.date, now: now)
+            let newtLive = isLive(latestNewt?.date, now: now)
+            let budget = newtLive ? latestNewt?.periodMs : nil
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsGroup {
+                    SettingRow("Show performance in headset") {
+                        Toggle("", isOn: Binding(get: { controller.showMetricsInVR },
+                                               set: { controller.setShowMetricsInVR($0) })).labelsHidden()
+                    }
+                    SettingRow("MetalFX spatial upscaling") {
+                        Toggle("", isOn: Binding(get: { controller.metalFXEnabled },
+                                               set: { controller.setMetalFXEnabled($0) })).labelsHidden()
+                    }
+                    SettingRow("MetalFX resolution", help: "Scale applies to width and height.", showsDivider: false) {
+                        Picker("MetalFX resolution", selection: Binding(
+                            get: { controller.metalFXScale }, set: { controller.setMetalFXScale($0) })) {
+                            Text("Auto (1.5×–2×)").tag(0.0)
+                            Text("1.25× (+25%)").tag(1.25)
+                            Text("1.5× (+50%)").tag(1.5)
+                            Text("2× (+100%)").tag(2.0)
+                        }.labelsHidden().frame(width: 170).disabled(!controller.metalFXEnabled)
+                    }
+                }
+
+                Text("MetalFX scales desktop captures before they enter the VR scene. 2× uses up to four times as many pixels. Output is capped at 3840 × 2400 while preserving aspect ratio; this does not change the headset’s render resolution.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                HStack {
+                    Label(!controller.running ? "Session stopped" :
+                          (encodeLive || newtLive ? "Receiving performance data" : "Waiting for fresh samples"),
+                          systemImage: encodeLive || newtLive ? "waveform.path" : "clock")
+                    Spacer()
+                    if let budget, budget > 0 {
+                        Text(String(format: "Target %.0f Hz · %.2f ms/frame", 1000 / budget, budget))
+                    }
+                }.font(.caption).foregroundColor(.secondary)
+
+                SettingsGroup {
+                    HStack(spacing: 0) {
+                        metric("Dashboard FPS", value: newtLive ? String(format: "%.1f", latestNewt!.fps) : "—",
+                               detail: newtLive ? "Application frame rate" : "No fresh dashboard sample", color: .primary)
+                        metric("Encode stage", value: encodeLive ? ms(latestEncode?.stageMs) : "—",
+                               detail: encodeLive ? "Video pipeline" : "No fresh encode sample", color: .orange)
+                        metric("USB transfer", value: encodeLive ? ms(latestEncode?.txMs) : "—",
+                               detail: encodeLive ? "Video transmission" : "No fresh transfer sample", color: .purple)
+                    }
+                }
+
+                SettingsGroup {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 14) {
+                            Label("Frame interval", systemImage: "circle.fill").foregroundColor(.blue)
+                            Label("CPU render", systemImage: "circle.fill").foregroundColor(.green)
+                            Label("Encode", systemImage: "circle.fill").foregroundColor(.orange)
+                            Label("USB", systemImage: "circle.fill").foregroundColor(.purple)
+                        }.font(.caption)
+                        DirectMetricsLineGraph(series: [
+                            .init(name: "Frame interval", color: .blue, points: metrics.newtSamples.compactMap {
+                                $0.fps > 0 ? .init(date: $0.date, value: 1000 / $0.fps) : nil
+                            }),
+                            .init(name: "CPU render", color: .green, points: metrics.newtSamples.compactMap { sample in
+                                sample.renderMs.map { .init(date: sample.date, value: $0) }
+                            }),
+                            .init(name: "Encode", color: .orange, points: metrics.encodeSamples.map { .init(date: $0.date, value: $0.stageMs) }),
+                            .init(name: "USB", color: .purple, points: metrics.encodeSamples.map { .init(date: $0.date, value: $0.txMs) })
+                        ], now: now, budgetMs: budget)
+                        Text("Shared time axis · scale adjusts to peaks · dashed line is the headset frame budget")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }.padding(12)
+                }
+
+                SettingsGroup {
+                    SettingRow("Dashboard prepare / CPU render") {
+                        Text(newtLive ? "\(ms(latestNewt?.prepareMs)) / \(ms(latestNewt?.renderMs))" : "—")
+                            .monospacedDigit().foregroundColor(.secondary)
+                    }
+                    SettingRow("Frames encoded") {
+                        Text(encodeLive ? String(latestEncode!.encoded) : "—").monospacedDigit().foregroundColor(.secondary)
+                    }
+                    SettingRow("MetalFX", showsDivider: false) {
+                        Text(!controller.metalFXEnabled ? "Off" : (metrics.metalFXDescription.map { "Last reported: \($0)" } ?? "Enabled; awaiting capture"))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("FPS measures the dashboard loop, not headset presentation. CPU render includes submission; it is not GPU time. Encode and USB stages overlap and should not be added as total latency. Readings expire after 5 seconds.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        }
+        .onAppear { metrics.start() }
+    }
+}
+
 private struct BrandHeader: View {
     var body: some View {
         HStack(spacing: 16) {
@@ -874,8 +1195,7 @@ private struct BrandHeader: View {
                     .foregroundColor(.secondary)
 
                 Link("triscuitcircuit", destination: URL(string: "https://github.com/triscuitcircuit")!)
-                    .font(.system(size: 12))
-                    .help("https://github.com/triscuitcircuit")
+                    .font(.system(size: 12)).help("https://github.com/triscuitcircuit")
             }
         }
         .padding(.horizontal, 24)
@@ -884,12 +1204,11 @@ private struct BrandHeader: View {
             LinearGradient(
                 colors: [Color(nsColor: .controlBackgroundColor),
                          Color(nsColor: .windowBackgroundColor)],
-                startPoint: .top, endPoint: .bottom)
+                startPoint: .top,
+                endPoint: .bottom)
         )
     }
 }
-
-// MARK: Groupings
 
 private struct SettingsGroup<Content: View>: View {
     @ViewBuilder let content: Content
@@ -948,8 +1267,6 @@ private struct SettingRow<Trailing: View>: View {
     }
 }
 
-// MARK: Wire speed gauge
-
 private struct WireSpeedGauge: View {
     let current: Double
     let ceiling: Double
@@ -987,8 +1304,6 @@ private struct WireSpeedGauge: View {
         }
     }
 }
-
-// MARK: Display editor row
 
 struct DisplayEditorRow: View {
     @Binding var display: DisplayEntry

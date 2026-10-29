@@ -30,3 +30,14 @@ AuthKey_*.p8
 MERGE-STAGING.md
 /pippinVR-Server/NewtBridge/README.md
 /pippinVR-Server/docs/
+
+**/ARCHITECTURE.md
+**/architecture.md
+/pippinVR-Server/build_scripts/*.command
+/pippinVR-Server/build_scripts/strip-line-comments.py
+/pippinVR-Server/LINK_RUNTIME_FINDINGS.md
+/pippinVR-Server/NATURAL_HAND_OCCLUSION.md
+/pippinVR-Server/HAND_BENCHMARK.md
+/pippinVR-Server/DIRECT_USB_NOTES.md
+**/__pycache__/
+*.dSYM/

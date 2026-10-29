@@ -3,7 +3,8 @@ import Foundation
 import PackageDescription
 
 let newtArchive = Context.packageDirectory + "/.build/newt-package/lib/libnewt_core.a"
-let directEnabled = FileManager.default.fileExists(atPath: newtArchive)
+let directEnabled = ProcessInfo.processInfo.environment["PIPPINVR_SKIP_DIRECT"] != "1" &&
+    FileManager.default.fileExists(atPath: newtArchive)
 let xrVendorLibDir = Context.packageDirectory + "/.build/monado-vendor/lib"
 
 func detectVulkanSDK() -> String? {
@@ -38,7 +39,10 @@ var targets: [Target] = [
     )
 ]
 
-var serverDependencies: [Target.Dependency] = ["LoggingCore", "IOSDeviceCore"]
+var serverDependencies: [Target.Dependency] = [
+    "LoggingCore", "IOSDeviceCore",
+    .product(name: "Sparkle", package: "Sparkle")
+]
 var serverExclude: [String] = []
 var serverSwiftSettings: [SwiftSetting] = []
 
@@ -101,13 +105,22 @@ if directEnabled {
                 "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks/Monado",
                 "-Xlinker", "-rpath", "-Xlinker", xrVendorLibDir
             ]),
+            .linkedFramework("Accelerate"),
             .linkedFramework("AppKit"),
             .linkedFramework("AVFoundation"),
             .linkedFramework("CoreGraphics"),
+            .linkedFramework("CoreImage"),
             .linkedFramework("CoreMedia"),
             .linkedFramework("CoreMediaIO"),
             .linkedFramework("CoreVideo"),
             .linkedFramework("Foundation"),
+            .linkedFramework("IOSurface"),
+            .linkedFramework("ImageIO"),
+            .linkedFramework("Metal"),
+            .linkedFramework("MetalFX"),
+            .linkedFramework("ModelIO"),
+            .linkedFramework("VideoToolbox"),
+            .linkedFramework("Vision"),
             .linkedFramework("QuartzCore"),
             .linkedFramework("ScreenCaptureKit")
         ]
@@ -121,13 +134,19 @@ targets.append(.executableTarget(
     dependencies: serverDependencies,
     path: "Sources/pippinvr-server",
     exclude: serverExclude,
-    swiftSettings: serverSwiftSettings
+    swiftSettings: serverSwiftSettings,
+    linkerSettings: [
+        .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
+    ]
 ))
 
 let package = Package(
     name: "pippinvr-server",
     platforms: [
         .macOS(.v14)
+    ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0")
     ],
     targets: targets,
     cxxLanguageStandard: .cxx17

@@ -74,7 +74,7 @@
 
     AVCaptureDeviceDiscoverySession* session = [AVCaptureDeviceDiscoverySession
         discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeExternal]
-                              mediaType:nil  // CRITICAL: nil, not AVMediaTypeVideo!
+                              mediaType:nil
                                position:AVCaptureDevicePositionUnspecified];
 
     LOG_DEBUG(@"Found %lu external device(s)", (unsigned long)session.devices.count);

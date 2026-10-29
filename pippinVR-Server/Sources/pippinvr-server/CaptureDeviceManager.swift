@@ -59,7 +59,7 @@ class CaptureDeviceManager: ObservableObject {
 
     init() {
         setupDeviceDiscovery()
-        
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             self.discoverDevices()
         }
@@ -73,17 +73,17 @@ class CaptureDeviceManager: ObservableObject {
             availableDevices = []
             return
         }
-        
+
         Logger.info("Found devices: \(iosDeviceInfos.count)")
-        
+
         var devices: [CaptureDevice] = []
-        
+
         for info in iosDeviceInfos {
             guard let avDevice = AVCaptureDevice(uniqueID: info.uniqueID) else {
                 Logger.warning("Could not access \(info.name) by UID")
                 continue
             }
-            
+
             let type: CaptureDevice.DeviceType
             if info.isIOSDevice {
                 type = .ipad
@@ -93,9 +93,9 @@ class CaptureDeviceManager: ObservableObject {
             } else {
                 type = .externalCamera
             }
-            
+
             let resolutions = extractResolutions(from: avDevice)
-            
+
             devices.append(CaptureDevice(
                 id: info.uniqueID,
                 name: info.name,
@@ -103,18 +103,18 @@ class CaptureDeviceManager: ObservableObject {
                 supportedResolutions: resolutions
             ))
         }
-        
+
         let builtinSession = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.builtInWideAngleCamera],
             mediaType: .video,
             position: .unspecified
         )
-        
+
         for device in builtinSession.devices {
             if devices.contains(where: { $0.id == device.uniqueID }) {
                 continue
             }
-            
+
             devices.append(CaptureDevice(
                 id: device.uniqueID,
                 name: device.localizedName,
@@ -122,7 +122,7 @@ class CaptureDeviceManager: ObservableObject {
                 supportedResolutions: extractResolutions(from: device)
             ))
         }
-        
+
         var seen = Set<String>()
         availableDevices = devices.filter { device in
             if seen.contains(device.id) {
@@ -149,8 +149,6 @@ class CaptureDeviceManager: ObservableObject {
 
         return (1920, 1080)
     }
-
-    // MARK: Private Functions
 
     private func setupDeviceDiscovery() {
         NotificationCenter.default.addObserver(
@@ -179,7 +177,7 @@ class CaptureDeviceManager: ObservableObject {
             Logger.info("Found iOS device screen: \(device.localizedName) (modelID: \(device.modelID))")
             return .ipad
         }
-        
+
         let name = device.localizedName.lowercased()
 
         if name.contains("ipad") || name.contains("iphone") {

@@ -1,5 +1,6 @@
 #include "NewtXRApp.h"
 #include "InteractionGeometry.h"
+#include "HandOcclusion.h"
 void NewtXR::CreateRenderAssets() {
     const std::vector<Vec3> cube = MakeCube();
     mCubeBuffer = mCore->CreateBuffer(cube.size() * sizeof(Vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -15,6 +16,14 @@ void NewtXR::CreateRenderAssets() {
     mRayBuffer = mCore->CreateBuffer(sizeof(rayVerts), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     mCore->UploadBuffer(mRayBuffer, rayVerts, sizeof(rayVerts));
 
+    const auto tube = MakeHandTube(), ball = MakeHandBall();
+    mHandTube = mCore->CreateBuffer(tube.size() * sizeof(VertexPC), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    mCore->UploadBuffer(mHandTube, tube.data(), tube.size() * sizeof(VertexPC));
+    mHandTubeCount = static_cast<uint32_t>(tube.size());
+    mHandBall = mCore->CreateBuffer(ball.size() * sizeof(VertexPC), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    mCore->UploadBuffer(mHandBall, ball.data(), ball.size() * sizeof(VertexPC));
+    mHandBallCount = static_cast<uint32_t>(ball.size());
+
     const auto dock = MakeDock();
     mDockBuffer = mCore->CreateBuffer(dock.size()*sizeof(VertexPC), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     mCore->UploadBuffer(mDockBuffer, dock.data(), dock.size()*sizeof(VertexPC));
@@ -28,10 +37,16 @@ void NewtXR::CreateRenderAssets() {
     mCore->CreateTexture(mLogoTexture, 256, 256); mCore->UpdateTexture(mLogoTexture, RenderLogo());
     mCore->CreateTexture(mBarTexture, 1024, 64); mCore->UpdateTexture(mBarTexture, RenderPanelBar());
     for(int i=0;i<9;++i) { mCore->CreateTexture(mButtonTextures[i],88,82); mCore->UpdateTexture(mButtonTextures[i],RenderDockButton(i,i==mSelected)); }
+    mCore->CreateTexture(mModelPopupTexture, 1024, 256);
+    mCore->UpdateTexture(mModelPopupTexture, RenderModelPopup(-1, 1.0f, true));
+    mCore->CreateTexture(mWristClockTexture, 512, 192);
+    mCore->UpdateTexture(mWristClockTexture, RenderWristClock(WristClockText(mClockSettings), mClockSettings));
+    mCore->CreateTexture(mMetricsTexture, 1024, 512);
+    mCore->UpdateTexture(mMetricsTexture, RenderMetricsGraph(MetricsSnapshot{}));
     mCore->CreateTexture(mMenuTexture, 1024, 160);
     mCore->CreateTexture(mContentTexture);
     mCore->UpdateTexture(mMenuTexture, RenderMenu(mSelected, mNotice.c_str(), false));
-    mCore->UpdateTexture(mContentTexture, RenderContent(mPage,mGridColor,mMediaVolume));
+    mCore->UpdateTexture(mContentTexture, RenderContent(mPage,mGridColor,mMediaVolume,mApps,mClockSettings,mSettingsTab,mPassthrough,mAudio.mode));
     mRenderedMenuSelected = mSelected;
     mRenderedPage = mPage;
     mContentDirty = false;
