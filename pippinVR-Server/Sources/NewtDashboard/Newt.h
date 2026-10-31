@@ -2,7 +2,7 @@
 #define NEWT_NEWT_H
 
 // SPDX-License-Identifier: MIT
-// Public C / C++ API for embedding the Newt XR session.
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,4 +20,4 @@ int Newt_PollHostRequest(void);
 }
 #endif
 
-#endif // NEWT_NEWT_H
+#endif

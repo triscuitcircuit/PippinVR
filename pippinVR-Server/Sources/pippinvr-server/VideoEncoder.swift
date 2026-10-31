@@ -131,8 +131,6 @@ final class VideoEncoder: @unchecked Sendable {
         session = nil
     }
 
-    // MARK: Handle Output
-
     private func handleEncoded(_ sampleBuffer: CMSampleBuffer) {
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
@@ -210,7 +208,7 @@ final class VideoEncoder: @unchecked Sendable {
         var out = Data()
         let bytes = UnsafeRawPointer(base).assumingMemoryBound(to: UInt8.self)
         var offset = 0
-        // Big Endian decoding
+
         while offset + 4 <= totalLength {
             let nalLength =
                 (Int(bytes[offset]) << 24) |

@@ -18,8 +18,6 @@ protocol FrameSink: AnyObject {
     var droppedFrameCount: Int { get }
 }
 
-// MARK: File verification with sink
-
 final class FileFrameSink: FrameSink {
     private let basePath: String
     private var handles: [UInt8: FileHandle] = [:]
@@ -83,8 +81,6 @@ enum FrameSinkError: Error, CustomStringConvertible {
     }
 }
 
-// MARK: Wire transport using TCP
-
 final class TCPFrameSink: FrameSink, @unchecked Sendable {
     private static let maxInFlightBytes = 8 * 1024 * 1024
 
@@ -99,9 +95,6 @@ final class TCPFrameSink: FrameSink, @unchecked Sendable {
     private var _inFlight = 0
     private var _dropped = 0
 
-    // Rolling throughput measurement: bytes accumulated in the current ~1s
-    // window, closed out and converted to Mbps whenever send() notices the
-    // window has elapsed.
     private var _windowStart = DispatchTime.now()
     private var _windowBytes = 0
     private var _throughputMbps: Double = 0
@@ -206,7 +199,7 @@ final class TCPFrameSink: FrameSink, @unchecked Sendable {
 
     func send(frame: EncodedFrame, streamID: UInt8) {
         lock.lock()
-        guard let conn = _connection else { lock.unlock(); return } // no client: drop
+        guard let conn = _connection else { lock.unlock(); return }
 
         if _awaitingKeyframe.contains(streamID) {
             guard frame.isKeyframe else { lock.unlock(); return }

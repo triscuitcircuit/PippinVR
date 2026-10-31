@@ -5,8 +5,8 @@
 #include <array>
 #include <cmath>
 
-// Per-controller idle detection. Compare against the last meaningful movement,
-// rather than the previous frame, so slow intentional motion also wakes the ray.
+
+
 class RayActivity {
 public:
     double idleSeconds = 2.0;
@@ -31,7 +31,7 @@ public:
         dot /= std::sqrt(norm * anchorNorm);
         const bool inputStarted = interacting && !inputWasActive;
         inputWasActive = interacting;
-        // q and -q describe the same orientation.
+
         const double rotationLimit = std::cos(wakeAngleDegrees * 3.141592653589793 / 360.0);
         if (!valid || inputStarted || distanceSquared >= wakeDistanceMeters * wakeDistanceMeters ||
             std::min(1.0, std::abs(dot)) < rotationLimit) {
@@ -44,7 +44,7 @@ public:
 
     float Alpha(double now) const {
         if (!valid) return 0;
-        if (idleSeconds == 0) return 1; // Explicit opt-out of auto-hide.
+        if (idleSeconds == 0) return 1;
         return static_cast<float>(std::clamp(1.0 - (now - lastActivity - idleSeconds) / 0.2, 0.0, 1.0));
     }
 
@@ -56,4 +56,4 @@ private:
     std::array<float, 4> anchorOrientation{0, 0, 0, 1};
 };
 
-#endif // NEWT_RAYACTIVITY_H
+#endif

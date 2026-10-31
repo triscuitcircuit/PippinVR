@@ -4,3 +4,4 @@
 [submodule "pippinVR-Server/third_party/monado-ql"]
 	path = pippinVR-Server/third_party/monado-ql
 	url = https://github.com/triscuitcircuit/Monando_MacOS_Fork.git
+	branch = main

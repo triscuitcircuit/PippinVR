@@ -2,7 +2,6 @@
 #define NEWT_NEWTLOG_H
 
 // SPDX-License-Identifier: MIT
-// Public logging hook for embedding Newt.
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,4 +23,4 @@ int Newt_IsEmbedded(void);
 }
 #endif
 
-#endif  // NEWT_NEWTLOG_H
+#endif

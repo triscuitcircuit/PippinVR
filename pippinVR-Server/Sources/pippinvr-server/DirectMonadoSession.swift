@@ -26,22 +26,15 @@ enum DirectMonadoError: Error, CustomStringConvertible {
     }
 }
 
-/// Thrown only while attempting to hand the dashboard off to the shared Newt
-/// session manager (`configure`/`ensureRunning`) -- distinct from a failure
-/// once the manager is actually supervising, so `run()` can fall back to a
-/// direct launch for the former but never for the latter (that would risk a
-/// second, unregistered process owning the headset).
 private enum ManagedSetupFailure: Error {
     case notAvailable(Error)
 }
 
-/// Supervises the OpenXR session via the MIT-licensed `Newt` library (in-process
-/// when built/run directly from Xcode, or via the bundled `pippinvr-xr` helper
-/// when running inside a packaged `.app` bundle).
 final class DirectMonadoSession: @unchecked Sendable {
     private let lock = NSLock()
     private var hostRequests: [Int] = []
     private var hostOutput = DirectHostRequests()
+    private var metricsOutput = Data()
 
     func takeHostRequests() -> [Int] {
         var requests = lock.withLock { let pending = hostRequests; hostRequests.removeAll(); return pending }
@@ -56,11 +49,20 @@ final class DirectMonadoSession: @unchecked Sendable {
     }
 
     private func receiveHostOutput(_ data: Data) {
-        lock.withLock {
+        let lines: [String] = lock.withLock {
+            metricsOutput.append(data)
+            var lines: [String] = []
+            while let newline = metricsOutput.firstIndex(of: 0x0A) {
+                if let line = String(data: metricsOutput[..<newline], encoding: .utf8) { lines.append(line) }
+                metricsOutput.removeSubrange(...newline)
+            }
+            if metricsOutput.count > 64 * 1024 { metricsOutput.removeAll() }
             for request in hostOutput.receive(data) where hostRequests.count < 16 {
                 hostRequests.append(request)
             }
+            return lines
         }
+        for line in lines { DirectMetricsStore.publishLocalLog(line) }
     }
     let configPath: String?
     private let inheritedEnvironment = ProcessInfo.processInfo.environment
@@ -70,6 +72,7 @@ final class DirectMonadoSession: @unchecked Sendable {
         Newt_SetLogHandler({ _, level, message in
             guard let message else { return }
             let text = "[Newt] \(String(cString: message))"
+            DirectMetricsStore.publishLocalLog(text)
             switch level {
             case 0: Logger.debug(text)
             case 2: Logger.warning(text)
@@ -109,6 +112,36 @@ final class DirectMonadoSession: @unchecked Sendable {
         ] where inheritedEnvironment[variable] == nil {
             environment[variable] = String(value)
         }
+        if environment["QL_METRICS_FILE"] == nil {
+            let metricsURL = DirectMetricsStore.metricsFileURL
+            try? FileManager.default.createDirectory(
+                at: metricsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            environment["QL_METRICS_FILE"] = metricsURL.path
+        }
+
+        environment["QL_MIRROR_SOCKET"] = VRMirrorConfiguration.socketPath
+        environment["QL_MIRROR_FPS_FILE"] = VRMirrorConfiguration.fpsURL.path
+
+        DirectWristClockPreferences.migrateIfNeeded()
+
+        if environment["QL_PASSTHROUGH"] == nil {
+            environment["QL_PASSTHROUGH"] = DirectPassthroughPreferences.allowed ? "1" : "0"
+        }
+        if environment["NEWT_METRICS"] == nil {
+            environment["NEWT_METRICS"] = UserDefaults.standard.bool(forKey: "directShowMetricsInVR") ? "1" : "0"
+        }
+        if environment["NEWT_METALFX_UPSCALE"] == nil {
+            let enabled = (UserDefaults.standard.object(forKey: "directMetalFXUpscale") as? Bool) ?? true
+            environment["NEWT_METALFX_UPSCALE"] = enabled ? "1" : "0"
+        }
+        if environment["NEWT_METALFX_SCALE"] == nil {
+            let scale = UserDefaults.standard.double(forKey: "directMetalFXScale")
+            environment["NEWT_METALFX_SCALE"] = String([0, 1.25, 1.5, 2].contains(scale) ? scale : 0)
+        }
+
+        for variable in Self.moltenVKCompatKeys where environment[variable] == nil {
+            environment[variable] = "0"
+        }
         for suffix in ["CAPTURE_FPS", "PANEL_WIDTH", "RAY_IDLE_SECONDS", "RAY_WAKE_METERS", "RAY_WAKE_DEGREES", "VIDEO_PATH"] {
             let key = "NEWT_" + suffix
             if environment[key] == nil { environment[key] = environment["PIPPINVR_" + suffix] }
@@ -134,6 +167,10 @@ final class DirectMonadoSession: @unchecked Sendable {
     var applicationName: String? { lock.withLock { externalName } }
 
     func connect(application: URL? = nil) {
+        guard USBLinkSpeed.detectQuestLinkSpeed() != nil else {
+            Logger.warning("Direct USB: no Quest on USB; not starting session")
+            return
+        }
         lock.lock()
         guard !running else { lock.unlock(); return }
         running = true
@@ -167,7 +204,6 @@ final class DirectMonadoSession: @unchecked Sendable {
     }
 
     static var isAvailable: Bool {
-        // Always available when linked against Newt (either via bundled helper or in-process Newt_Run).
         if clientURL != nil && runtimeManifestURL != nil && moltenVKManifestURL != nil {
             return true
         }
@@ -224,11 +260,19 @@ final class DirectMonadoSession: @unchecked Sendable {
         return config.apps.map { (title: $0.title, target: $0.game ?? $0.project ?? "") }
     }
 
+    private static let moltenVKCompatKeys = ["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS", "MVK_CONFIG_USE_MTLHEAP"]
+
     private static let dashboardOverrideKeys = [
-        "QL_OVERRIDE_FPS", "QL_OVERRIDE_SCALE", "QUEST_LINK_LOG",
+        "QL_OVERRIDE_FPS", "QL_OVERRIDE_SCALE", "QUEST_LINK_LOG", "QL_METRICS_FILE",
+        "QL_LINK_PROBE", "QL_AUDIO_PROBE", "QL_CAMERA_PROBE", "QL_PASSTHROUGH",
+        "QL_MIRROR_SOCKET", "QL_MIRROR_FPS_FILE",
+        "QL_FLOAT_PROBE", "QL_FLOAT_PROBE_SECONDS", "QL_AUDIO_TEST_TONE",
+        "PIPPIN_HAND_BENCHMARK", "PIPPIN_HAND_BENCHMARK_DIR", "PIPPIN_HAND_BENCHMARK_WIDTH",
+        "PIPPIN_HAND_BENCHMARK_HZ",
+        "NEWT_WRIST_CLOCK", "NEWT_METRICS", "NEWT_METALFX_UPSCALE", "NEWT_METALFX_SCALE",
         "NEWT_CAPTURE_FPS", "NEWT_PANEL_WIDTH",
         "NEWT_RAY_IDLE_SECONDS", "NEWT_RAY_WAKE_METERS", "NEWT_RAY_WAKE_DEGREES", "NEWT_VIDEO_PATH"
-    ]
+    ] + moltenVKCompatKeys
 
     private func dashboardOverrides(from environment: [String: String]) -> [String: String] {
         environment.filter { Self.dashboardOverrideKeys.contains($0.key) }
@@ -278,11 +322,6 @@ final class DirectMonadoSession: @unchecked Sendable {
         }
     }
 
-    /// Routes a native-app launch through the shared manager when it's
-    /// already supervising this session's dashboard, so the launch stays
-    /// visible to Godot/other manager clients instead of starting a second,
-    /// unregistered process. Returns false if the manager isn't active --
-    /// the caller should fall back to its own direct launch in that case.
     func launchViaManager(executable: URL) async -> Bool {
         guard lock.withLock({ usingManager }) else { return false }
         do {
@@ -329,9 +368,9 @@ final class DirectMonadoSession: @unchecked Sendable {
            let runtimeManifestURL = Self.runtimeManifestURL,
            let moltenVKManifestURL = Self.moltenVKManifestURL {
             let monadoDir = runtimeManifestURL
-                .deletingLastPathComponent() // OpenXR
-                .deletingLastPathComponent() // Resources
-                .deletingLastPathComponent() // Contents
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
                 .appendingPathComponent("Frameworks/Monado")
 
             var environment = resolvedEnvironment
@@ -366,7 +405,7 @@ final class DirectMonadoSession: @unchecked Sendable {
             Logger.info("Direct USB: runtime manifest \(runtimeManifestURL.path)")
             defer {
                 outputPipe.fileHandleForReading.readabilityHandler = nil
-                lock.withLock { process = nil; stdinPipe = nil; hostRequests.removeAll(); hostOutput = DirectHostRequests() }
+                lock.withLock { process = nil; stdinPipe = nil; hostRequests.removeAll(); hostOutput = DirectHostRequests(); metricsOutput.removeAll() }
             }
             try child.run()
             if lock.withLock({ stopRequested }) { command("stop") }
@@ -384,8 +423,7 @@ final class DirectMonadoSession: @unchecked Sendable {
         Logger.info("Direct USB: running Newt_Run() in-process")
         lock.withLock { inProcessRunning = true }
 
-        for variable in ["QL_OVERRIDE_FPS", "QL_OVERRIDE_SCALE", "NEWT_CAPTURE_FPS", "NEWT_PANEL_WIDTH",
-                         "NEWT_RAY_IDLE_SECONDS", "NEWT_RAY_WAKE_METERS", "NEWT_RAY_WAKE_DEGREES", "NEWT_VIDEO_PATH"] {
+        for variable in Self.dashboardOverrideKeys {
             if let value = resolvedEnvironment[variable] { setenv(variable, value, 1) } else { unsetenv(variable) }
         }
         if inheritedEnvironment["XR_RUNTIME_JSON"] == nil, let url = Self.runtimeManifestURL {

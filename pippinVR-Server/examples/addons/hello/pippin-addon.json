@@ -1,0 +1,13 @@
+{
+  "apiVersion": 1,
+  "id": "hello-pippin",
+  "name": "Hello Pippin",
+  "version": "1.0",
+  "description": "A simple headset panel with a button.",
+  "panel": {
+    "title": "Hello Pippin",
+    "lines": ["This panel is provided by an add-on.", "Select the button to emit an event."],
+    "buttons": [{ "id": "hello", "label": "Say hello" }],
+    "anchor": "dashboard"
+  }
+}

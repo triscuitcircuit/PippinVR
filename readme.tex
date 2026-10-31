@@ -1,4 +1,4 @@
-% Created 2026-10-22 Thu 01:31
+% Created 2026-10-29 Thu 09:50
 % Intended LaTeX compiler: pdflatex
 \documentclass[11pt]{article}
 \usepackage[utf8]{inputenc}
@@ -46,7 +46,7 @@
 
 \url{figures/pippin\_example.gif}
 \section{About}
-\label{sec:org0ce0959}
+\label{sec:orgee35afe}
 This project was created out of the frustration that all MacOS VR virtual screen software (\emph{Meta Quest Remote Desktop}, \emph{Immersed}) are proprietary pieces of software. If I have code recording my screen, I want to know what it is actually doing.
 
 \texttt{PippinVR} is named after the Apple Pippin, which itself was named after a relative to the McIntosh apple. The Apple Pippin was meant to be more than a platform just for game consoles, which is what I see VR to be as well.
@@ -56,7 +56,7 @@ This code is under the GPLv3 license as I feel strongly that any derivatives of 
 "Given enough eyeballs, all bugs are shallow" - Eric S. Raymond (The Cathedral and the Bazaar)
 \end{quote}
 \subsection{Capabilities}
-\label{sec:orgee35afe}
+\label{sec:org7925b9e}
 \texttt{PippinVR} has two modes:
 \begin{itemize}
 \item Connecting via QuestLink USB
@@ -87,14 +87,13 @@ Dynamic framerate of each virtual screen conserves bandwidth using the wire.
 \begin{center}
 \includegraphics[width=.9\linewidth]{figures/Pippin_Tablet_Streaming.JPG}
 \end{center}
-\subsubsection{}
-\label{sec:org7925b9e}
+\textbf{*}
 \section{Installation}
-\label{sec:org2dc1f56}
+\label{sec:org9beed48}
 This respsitory contains both the \texttt{PippinVR-Server}, the server running on MacOS, and \texttt{PippinVR-Client}, a client running on a Meta headset.
 Because this code was created with wire transmission in mind, it makes use of Android Debug Bridge (adb) and SideQuest.
 \subsection{Installation off Github}
-\label{sec:org9639605}
+\label{sec:org0ce0959}
 The \href{https://github.com/triscuitcircuit/PippinVR/releases}{Releases} tab on Github should have the most up to date installer file for the server (`.dmg`), as well as the `app-debug.apk`.
 
 The server (`.dmg`) file should be mounted with MacOs, and \texttt{PippinVR} can then be installed by dragging and dropping into the \texttt{/Applications} folder.
@@ -110,7 +109,7 @@ Make sure that \texttt{adb} is listening on the specifically bounded port for Pi
 adb reverse tcp:9943 tcp:9943
 \end{verbatim}
 \subsection{Requirements for building from source}
-\label{sec:org9beed48}
+\label{sec:orgb948b55}
 The following requirements are necessary for running \texttt{PippinVR}:
 \begin{itemize}
 \item \href{https://brew.sh/}{MacOS Homebrew}
@@ -125,7 +124,7 @@ The following requirements are necessary for running \texttt{PippinVR}:
 \item MacOS (tested on MacOS 26.6)
 \end{itemize}
 \subsubsection{Pippin-VR Server}
-\label{sec:org7f6f53b}
+\label{sec:org9639605}
 This section is for the server aspect
 Make sure that \texttt{adb} is listening on the specifically bounded port for Pippin.
 \begin{verbatim}
@@ -151,7 +150,7 @@ This setting needs to be changed  each time the app is recompiled.
 
 Pippin-VR server has a settings menu that can be accessed from the menu bar. The settings menu allows changing the screen configurations while displaying to the headset. Displays can be added or removed, with instant refresh once the settings have been applied.
 \subsubsection{Pippin-VR Client}
-\label{sec:orgb948b55}
+\label{sec:org7f6f53b}
 The client is what is run on the headset as an app, and is what displays the virtual screens in the headset.
 
 To build and install the client on the headset, the following make command calls upon `gradle` to build the android components. The client is created in C++, and relies on the \texttt{CMAKELISTS.TXT} to pull and build required packages (SOIL2 , GLM, YAMLCPP).
@@ -163,7 +162,7 @@ make install-client
 Make sure a \texttt{local.properties} in \texttt{pippinVR-client} file contains `sdk.dir` and points to the android sdk. An example file called \texttt{local.properties.example} is provided.
 \end{quote}
 \section{Design}
-\label{sec:orgfa898cb}
+\label{sec:orgde0f8b8}
 The design of \texttt{PippinVR-server} is outlined as follows:
 \begin{center}
 \includegraphics[width=.9\linewidth]{figures/UML_DisplayCapture.png}
@@ -176,19 +175,47 @@ The server creates Virtual displays through the \texttt{CGVirtualDisplay}, sends
 \end{center}
 Actor diagram for lifetimes of the client. Showcases the loop of frame encoding and sending to the headset to \texttt{FrameSink}.
 \subsection{Known Issues}
-\label{sec:orgde0f8b8}
+\label{sec:org2dc1f56}
 \begin{itemize}
 \item Meta Quest remote polling sometimes stops working after wake.
 \item Stale displays with old content will stay in the headset when the \texttt{PippinVR} app is disconnected.
 \item Connected iPadOS and iOS devices are stuck with 1920x1080 landscape resolutions.
 \end{itemize}
 \section{Contributing}
-\label{sec:org7161a33}
+\label{sec:orgfa898cb}
 Contributions are welcome and encouraged (as per the GNUv3 License). To contribute, make sure to use the \texttt{.pre-commit} file. To do so, make sure to install via \href{https://formulae.brew.sh/formula/pre-commit}{Homebrew}.
 \begin{verbatim}
 pre-commit install
 \end{verbatim}
 This project will take contributions in the form of pull-requests.
+\section{Acknowledgements}
+\label{sec:org7161a33}
+PippinVR builds on these major open-source projects and code bases. Full
+license texts for the bundled runtime libraries are in the app bundle at
+\texttt{Contents/Resources/Licenses/} where the upstream distribution provides one.
+
+\begin{description}
+\item[{\textbf{Max Thomas (shinyquagsire23)}}] Original macOS Quest Link port of
+Monado (\texttt{shinyquagsire23/monado}, branch \texttt{macos\_ql\_merge}, 2023), which
+the Quest Link driver in this project was from, including the
+XRSP protocol implementation.
+\item[{\textbf{Monado contributors (Collabora and the freedesktop.org community)}}] The OpenXR runtime, compositor, and driver framework.
+\item[{\textbf{WiVRn contributors}}] The streaming video encoder, YUV conversion,
+and VideoToolbox encoder code adapted by the Quest Link driver.
+\item[{\textbf{Khronos Group}}] The OpenXR and Vulkan APIs and the OpenXR SDK loader
+bundled with the runtime.
+\item[{\textbf{MoltenVK contributors (The Brenwill Workshop and Khronos)}}] Vulkan-to-Metal translation used by Monado and Newt on macOS. (The
+Vulkan SDK distribution used for local builds does not ship a separate
+MoltenVK license file; MoltenVK is Apache License 2.0.)
+\item[{\textbf{libusb contributors}}] USB device access for the Quest Link transport.
+\item[{\textbf{Cap'n Proto contributors}}] Serialization used by the XRSP protocol.
+\item[{\textbf{Eigen contributors}}] Linear algebra used by Monado.
+\item[{\textbf{Boost.PFR contributors}}] Reflection utilities used by Monado.
+\item[{\textbf{SDL contributors}}] Platform/window support libraries bundled with
+the Monado runtime.
+\end{description}
+
+PippinVR itself is by triscuitcircuit.
 \section{License}
 \label{sec:org194cf40}
 GNU GENERAL PUBLIC LICENSE VERSION 3 (GPLv3).

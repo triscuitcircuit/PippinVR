@@ -1,38 +1,24 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Report a problem with PippinVR
 title: ''
 labels: ''
 assignees: ''
-
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+**What happened?**
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+**What did you expect?**
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+**Steps to reproduce**
+1.
+2.
+3.
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+**System details**
+Paste the details from PippinVR → Settings → Help & Support, then add your Quest model and software version. Include any relevant app or headset settings.
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
+**Logs or screenshots (optional)**
+Share only the relevant portion. Issues are public: remove personal information, file paths, screen contents, camera images, and other sensitive details before posting.
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
-
-**Additional context**
-Add any other context about the problem here.
+**Anything else?**

@@ -54,8 +54,6 @@ final class PipelineSession: @unchecked Sendable {
         self.options = options
     }
 
-    // MARK: For Menu Bar Status generation
-
     var clientConnected: Bool {
         stateLock.lock(); defer { stateLock.unlock() }
         return _clientConnected
@@ -134,10 +132,9 @@ final class PipelineSession: @unchecked Sendable {
             await pipeline.shutdown()
         }
 
-        // Create display configuration transaction
         var displayConfig: CGDisplayConfigRef?
         let beginResult = CGBeginDisplayConfiguration(&displayConfig)
-        
+
         if beginResult != .success || displayConfig == nil {
             Logger.warning("Reconfigure: Failed to begin display configuration transaction")
         }
@@ -151,8 +148,7 @@ final class PipelineSession: @unchecked Sendable {
                 Logger.debug(message)
             }
             try pipeline.createDisplay(index: index)
-            
-            // Configure position in transaction
+
             if let config = displayConfig, let display = pipeline.display {
                 let xOffset = Int32(index) * 10000
                 let arrangeResult = CGConfigureDisplayOrigin(config, display.displayID, xOffset, 0)
@@ -160,7 +156,7 @@ final class PipelineSession: @unchecked Sendable {
                     Logger.debug("Reconfigure: Configured display \(display.displayID) at x=\(xOffset)")
                 }
             }
-            
+
             built.append(pipeline)
         }
 
@@ -171,14 +167,14 @@ final class PipelineSession: @unchecked Sendable {
             if count > 0 {
                 activeDisplays = Array(repeating: 0, count: Int(count))
                 CGGetActiveDisplayList(count, &activeDisplays, &count)
-                
+
                 let preserve = displayIDsPreservingMirror(built)
                 Logger.info("Reconfigure: Disabling mirroring for \(count) active display(s), preserving \(preserve.count)")
                 for displayID in activeDisplays where !preserve.contains(displayID) {
                     _ = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
                 }
             }
-            
+
             _ = CGCompleteDisplayConfiguration(config, .permanently)
         }
 
@@ -270,7 +266,7 @@ final class PipelineSession: @unchecked Sendable {
                     Logger.warning("Failed to fix mirroring for display \(displayID)")
                 }
             }
-            
+
             let completeResult = CGCompleteDisplayConfiguration(config, .permanently)
             if completeResult == .success {
                 Logger.info("Mirror screen changed")
@@ -281,12 +277,12 @@ final class PipelineSession: @unchecked Sendable {
             Logger.info("Mirroring verification passed - no mirrors detected")
         }
     }
-    
+
     func resetToDefault() async throws {
         let defaultConfig = ServerConfig.defaultConfig()
         try await reconfigure(displays: defaultConfig.displays)
     }
-    
+
     func loadConfig(path: String) async throws {
         let (loadedConfig, _) = ServerConfig.loadOrCreate(path: path)
         options.configPath = path
@@ -294,7 +290,7 @@ final class PipelineSession: @unchecked Sendable {
         try await reconfigure(displays: loadedConfig.displays)
         Logger.info("\(path) Config loaded")
     }
-    
+
     func reloadConfig() async throws {
         guard let path = options.configPath else {
             throw ReconfigurationError.noConfigPath
@@ -355,8 +351,6 @@ final class PipelineSession: @unchecked Sendable {
         try await reconfigure(displays: newDisplays)
         Logger.warning("disconnected camera device '\(deviceID)'")
     }
-
-    // MARK: Runtime
 
     func run() async throws {
         let config = options.config
@@ -484,8 +478,6 @@ final class PipelineSession: @unchecked Sendable {
         return false
     }
 
-    // MARK: Lifecycle for streaming
-
     private func startStreaming() async throws {
         let config = options.config
 
@@ -493,11 +485,11 @@ final class PipelineSession: @unchecked Sendable {
 
         var displayConfig: CGDisplayConfigRef?
         let beginResult = CGBeginDisplayConfiguration(&displayConfig)
-        
+
         if beginResult != .success || displayConfig == nil {
             Logger.warning("Displays may overlap")
         }
-        
+
         for (index, entry) in config.displays.enumerated() {
             let pipeline = DisplayPipeline(streamID: UInt8(index),
                                            entry: entry,
@@ -516,7 +508,7 @@ final class PipelineSession: @unchecked Sendable {
                     Logger.warning("Failed to configure position for display \(display.displayID) at x=\(xOffset) (error: \(arrangeResult.rawValue))")
                 }
             }
-            
+
             built.append(pipeline)
         }
 
@@ -527,7 +519,7 @@ final class PipelineSession: @unchecked Sendable {
             if count > 0 {
                 activeDisplays = Array(repeating: 0, count: Int(count))
                 CGGetActiveDisplayList(count, &activeDisplays, &count)
-                
+
                 let preserve = displayIDsPreservingMirror(built)
                 for displayID in activeDisplays where !preserve.contains(displayID) {
                     let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
@@ -538,7 +530,7 @@ final class PipelineSession: @unchecked Sendable {
                     }
                 }
             }
-            
+
             let completeResult = CGCompleteDisplayConfiguration(config, .permanently)
             if completeResult == .success {
                 Logger.info("Successfully arranged \(built.count) displays in non-overlapping positions")
@@ -567,7 +559,7 @@ final class PipelineSession: @unchecked Sendable {
             try await pipeline.startCapture()
         }
     }
-    
+
     private func logFinalDisplayConfiguration(pipelines: [DisplayPipeline]) {
         Logger.info("Created \(pipelines.count) new pipeline(s)")
 
@@ -576,13 +568,13 @@ final class PipelineSession: @unchecked Sendable {
             Logger.warning("Could not get active display count")
             return
         }
-        
+
         var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
         guard CGGetActiveDisplayList(displayCount, &displays, &displayCount) == .success else {
             Logger.warning("Could not get active display list")
             return
         }
-        
+
         Logger.info("Total active displays in system: \(displayCount)")
     }
 
@@ -624,8 +616,6 @@ final class PipelineSession: @unchecked Sendable {
         Logger.warning("shutdown complete")
     }
 
-    // MARK: ADB connection
-
     private func armAdbReverse(port: UInt16) {
         let candidates = [
             "\(NSHomeDirectory())/Library/Android/sdk/platform-tools/adb",
@@ -664,8 +654,6 @@ final class PipelineSession: @unchecked Sendable {
             }
         }
     }
-
-    // MARK: Stat Printout
 
     private func printStats(elapsed: TimeInterval) {
         guard elapsed > 0 else { return }

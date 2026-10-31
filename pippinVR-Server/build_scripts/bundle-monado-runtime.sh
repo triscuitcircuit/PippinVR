@@ -181,6 +181,7 @@ if [ -f "${DEST}/libSDL3.0.dylib" ] && [ ! -e "${DEST}/libSDL3.dylib" ]; then
 fi
 
 EXECUTABLE="${APP_DIR}/Contents/MacOS/pippinvr-server"
+ENTITLEMENTS="${PIPPIN_SERVER_DIR}/Resources/PippinVR.entitlements"
 for lib in libopenxr_loader.dylib libvulkan.1.dylib; do
     if otool -L "${EXECUTABLE}" | grep -q "@loader_path/${lib}"; then
         install_name_tool -change "@loader_path/${lib}" \
@@ -218,6 +219,43 @@ else
     echo "is unexpected." >&2
 fi
 
+LICENSE_DIR="${APP_DIR}/Contents/Resources/Licenses"
+mkdir -p "${LICENSE_DIR}"
+stage_license() {
+    local source="$1" dest="$2"
+    if [ -f "${source}" ]; then
+        cp "${source}" "${LICENSE_DIR}/${dest}"
+    else
+        echo "warning: license file not found, skipping: ${source}" >&2
+    fi
+}
+if [ -f "${PIPPIN_SERVER_DIR}/../readme.org" ]; then
+    cp "${PIPPIN_SERVER_DIR}/../readme.org" "${APP_DIR}/Contents/Resources/readme.org"
+fi
+if [ -f "${PIPPIN_SERVER_DIR}/../LICENSE" ]; then
+    stage_license "${PIPPIN_SERVER_DIR}/../LICENSE" "PippinVR-LICENSE.txt"
+fi
+stage_license "${PIPPIN_SERVER_DIR}/../Newt/LICENSE" "Newt-LICENSE.txt"
+stage_license "${PIPPIN_SERVER_DIR}/third_party/monado-ql/LICENSE" "Monado-LICENSE.txt"
+if [ -d "${PIPPIN_SERVER_DIR}/third_party/monado-ql/LICENSES" ]; then
+    mkdir -p "${LICENSE_DIR}/Monado-LICENSES"
+    cp "${PIPPIN_SERVER_DIR}"/third_party/monado-ql/LICENSES/*.txt "${LICENSE_DIR}/Monado-LICENSES/" 2>/dev/null || true
+fi
+stage_license "${PIPPIN_SERVER_DIR}/third_party/openxr-sdk/LICENSE" "OpenXR-SDK-LICENSE.txt"
+stage_license "${PIPPIN_SERVER_DIR}/third_party/eigen-3.4.0/COPYING.README" "Eigen-COPYING.README.txt"
+stage_license "${PIPPIN_SERVER_DIR}/third_party/eigen-3.4.0/COPYING.MPL2" "Eigen-COPYING.MPL2.txt"
+stage_license "${PIPPIN_SERVER_DIR}/third_party/monado-ql/build/_deps/boostpfr-src/LICENSE_1_0.txt" "Boost-PFR-LICENSE_1_0.txt"
+for candidate in /opt/homebrew/Cellar/libusb/*/COPYING /usr/local/Cellar/libusb/*/COPYING; do
+    [ -f "${candidate}" ] && stage_license "${candidate}" "libusb-COPYING.txt" && break
+done
+for candidate in /opt/homebrew/Cellar/capnp/*/LICENSE /usr/local/Cellar/capnp/*/LICENSE; do
+    [ -f "${candidate}" ] && stage_license "${candidate}" "CapnProto-LICENSE.txt" && break
+done
+for candidate in /opt/homebrew/Cellar/sdl3/*/LICENSE.txt /usr/local/Cellar/sdl3/*/LICENSE.txt; do
+    [ -f "${candidate}" ] && stage_license "${candidate}" "SDL3-LICENSE.txt" && break
+done
+echo "Staged acknowledgements/licenses at: ${LICENSE_DIR}"
+
 LEAKED_DEPS="$(otool -L "${DEST}"/*.dylib 2>/dev/null \
     | grep -E '^\s+(/opt/homebrew|/usr/local|/Users|/tmp)' || true)"
 if [ -n "${LEAKED_DEPS}" ]; then
@@ -225,6 +263,9 @@ if [ -n "${LEAKED_DEPS}" ]; then
     echo "${LEAKED_DEPS}" >&2
     exit 1
 fi
+
+python3 "${SCRIPT_DIR}/verify-bundle.py" "${APP_DIR}" --fix-rpaths
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}" bash "${SCRIPT_DIR}/sign-sparkle.sh" "${APP_DIR}"
 
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 for library in "${DEST}"/*.dylib; do
@@ -242,11 +283,11 @@ if [ -f "${APP_DIR}/Contents/Resources/newtd" ]; then
     fi
 fi
 if [ "${CODESIGN_IDENTITY}" = "-" ]; then
-    codesign --force --sign - "${EXECUTABLE}" >/dev/null
-    codesign --force --sign - "${APP_DIR}" >/dev/null
+    codesign --force --sign - --entitlements "${ENTITLEMENTS}" "${EXECUTABLE}" >/dev/null
+    codesign --force --sign - --entitlements "${ENTITLEMENTS}" "${APP_DIR}" >/dev/null
 else
-    codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY}" "${EXECUTABLE}" >/dev/null
-    codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY}" "${APP_DIR}" >/dev/null
+    codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS}" "${EXECUTABLE}" >/dev/null
+    codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS}" "${APP_DIR}" >/dev/null
 fi
 codesign --verify --strict "${APP_DIR}"
 

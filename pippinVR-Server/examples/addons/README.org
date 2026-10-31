@@ -1,0 +1,44 @@
+#+AUTHOR: Triscuitcircuit
+#+DATE: \today
+#+OPTIONS: h:3
+#+TITLE: Add-ons
+
+* Setup
+In Direct USB mode, open *Settings → Apps & Add-ons → Add-ons*, select *Install Example*, and enable it. You can also install =hello/pippin-addon.json= with *Install Add-on*. Its panel appears when the headset dashboard is open.
+
+* Manifest
+A version 1 manifest contains =apiVersion= (1), a unique lowercase =id= (letters, digits, and hyphens), =name=, =version=, =description=, and either =panel= or =entrypoint=. Panel add-ons contain =title=, =lines=, =buttons= and an optional =anchor= (=dashboard=, =world=, or =head=). Installed add-ons start disabled.
+
+For an executable add-on, put =pippin-addon.json= and its executable files in a folder and choose that folder with *Install Add-on*. Set =entrypoint= to a relative path to an executable file inside the folder. PippinVR copies the folder into its application-support add-on directory. In Direct USB, click *Run* in Settings; PippinVR starts the local API if needed. Optionally enable automatic start when Direct USB connects. *Stop* terminates the launched process. Add-ons run with the same macOS access as the user. Closing PippinVR stops launched add-ons.
+
+#+begin_src json :tangle no
+{"apiVersion":1,"id":"my-tool","name":"My tool","version":"1.0",
+ "description":"A local integration.","entrypoint":"start.command"}
+#+end_src
+
+A launcher script must have executable permission and an interpreter line. Use =exec= when launching the main process so Stop can terminate it. Add-on packages must include or document their required runtime. Add-on code connects using the local API connection file described below.
+
+The following block tangles to [[file:hello/pippin-addon.json][the example manifest]]:
+#+begin_src json :tangle hello/pippin-addon.json :mkdirp yes
+{
+  "apiVersion": 1,
+  "id": "hello-pippin",
+  "name": "Hello Pippin",
+  "version": "1.0",
+  "description": "A simple headset panel with a button.",
+  "panel": {
+    "title": "Hello Pippin",
+    "lines": ["This panel is provided by an add-on.", "Select the button to emit an event."],
+    "buttons": [{ "id": "hello", "label": "Say hello" }],
+    "anchor": "dashboard"
+  }
+}
+#+end_src
+
+* Events
+Button and close events are appended as JSON lines to =~/Library/Application Support/Newt/ui/events.jsonl= (or =$NEWT_STATE_DIR/ui/events.jsonl= when set). The panel identifier is =pippin-addon--<id>=; button events include the button ID. The event log is shared, bounded, and can rotate; clients should handle truncation and filter by panel ID. It is a local integration mechanism, not a private channel or a guaranteed event queue.
+
+* Local integration API
+The API guide is included from [[file:api/README.org][its own Org file]] so it stays in sync.
+
+#+INCLUDE: "api/README.org::*Local integration API" :only-contents t :minlevel 2

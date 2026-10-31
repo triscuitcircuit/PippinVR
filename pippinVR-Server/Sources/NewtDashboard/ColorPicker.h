@@ -2,6 +2,8 @@
 #define NEWT_COLORPICKER_H
 // SPDX-License-Identifier: MIT
 #include <algorithm>
+#include "WristClockSettings.h"
+#include "PassthroughSettings.h"
 #include <array>
 #include <cmath>
 struct GridColor {
@@ -21,8 +23,22 @@ inline int GridControlAt(float x,float y) {
     if(x>=70 && x<=640 && y>=140 && y<=176) return 100;
     if(x>=70 && x<=640 && y>=202 && y<=442) return 102;
     if(x>=690 && x<=910 && y>=330 && y<=390) return 103;
-    if(x>=70 && x<=910 && y>=470 && y<=538) return 101;
+    if(x>=690 && x<=910 && y>=400 && y<=450) return 111;
+    if(x>=70 && x<=640 && y>=470 && y<=538) return 101;
+    if(x>=690 && x<=910 && y>=470 && y<=538) return 107;
+    if(x>=690 && x<=910 && y>=548 && y<=584) return 108;
+    if(x>=70 && x<=440 && y>=548 && y<=584) return 109;
+    if(x>=460 && x<=670 && y>=548 && y<=584) return 110;
     return -1;
+}
+constexpr float kSettingsTabX[3] = {340, 550, 760};
+constexpr float kSettingsTabWidth = 194;
+inline int HeadsetSettingsControlAt(float x, float y, int tab) {
+    if (y >= 36 && y <= 86) {
+        for (int i = 0; i < 3; ++i)
+            if (x >= kSettingsTabX[i] && x <= kSettingsTabX[i] + kSettingsTabWidth) return 104 + i;
+    }
+    return tab == 1 ? WristClockControlAt(x, y) : tab == 2 ? PassthroughControlAt(x, y) : GridControlAt(x, y);
 }
 inline bool PickGridColor(GridColor& color,int control,float x,float y) {
     auto before=color;
@@ -34,4 +50,4 @@ inline bool PickGridColor(GridColor& color,int control,float x,float y) {
     return before.hue!=color.hue || before.saturation!=color.saturation || before.value!=color.value;
 }
 
-#endif // NEWT_COLORPICKER_H
+#endif

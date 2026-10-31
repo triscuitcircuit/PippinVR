@@ -116,10 +116,10 @@ final class VirtualDisplay {
 
         logDisplayDiagnostics()
     }
-    
+
     func disableMirroringInTransaction(_ config: CGDisplayConfigRef) -> Bool {
         let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
-        
+
         if result == .success {
             Logger.debug("Configured display \(displayID) to disable mirroring")
             return true
@@ -155,12 +155,6 @@ final class VirtualDisplay {
 
     func dispose() {}
 
-    // displayID above is cached once at creation. If CGVirtualDisplay's
-    // window-server-assigned ID is ever reassigned later (observed as an
-    // existing display silently adopting a newer one's traits after it's
-    // added), the cached value goes stale while this stays live -- comparing
-    // the two is how we'd prove/disprove that theory without being able to
-    // click through the headset UI directly.
     var liveDisplayID: CGDirectDisplayID {
         let idSel = NSSelectorFromString("displayID")
         guard display.responds(to: idSel) else { return 0 }
@@ -169,23 +163,21 @@ final class VirtualDisplay {
         return unsafeBitCast(idImp, to: GetID.self)(display, idSel)
     }
 
-    // MARK: Diagnostic functions
-    
     private static func logActiveDisplays() {
         var displayCount: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &displayCount) == .success else {
             Logger.warning("Failed to get active display count")
             return
         }
-        
+
         var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
         guard CGGetActiveDisplayList(displayCount, &displays, &displayCount) == .success else {
             Logger.warning("Failed to get active display list")
             return
         }
-        
+
         Logger.debug("Currently \(displayCount) active display(s) before creating new virtual display")
-        
+
         for (index, displayID) in displays.enumerated() {
             let bounds = CGDisplayBounds(displayID)
             let isMain = CGDisplayIsMain(displayID) != 0
@@ -193,8 +185,6 @@ final class VirtualDisplay {
             Logger.debug("  [\(index)] ID=\(displayID), \(Int(bounds.width))x\(Int(bounds.height)), main=\(isMain), mirrored=\(isMirrored)")
         }
     }
-
-    // MARK: Helper functions for runtime
 
     private static func rtAlloc(_ cls: AnyClass) -> AnyObject {
         let sel = NSSelectorFromString("alloc")

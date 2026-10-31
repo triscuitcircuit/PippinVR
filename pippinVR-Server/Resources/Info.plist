@@ -32,10 +32,57 @@
 	<string>PippinVR needs to control system events for virtual display management.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>PippinVR needs screen recording permission to capture and stream your displays to the VR headset.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>PippinVR plays your Mac's sound in the VR headset, and mutes the Mac's speakers while the headset has it.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>PippinVR plays your Mac's sound in the VR headset, and mutes the Mac's speakers while the headset has it.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>PippinVR may need camera access for advanced features.</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>3D Model</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>usdz</string>
+				<string>usd</string>
+				<string>usda</string>
+				<string>usdc</string>
+				<string>obj</string>
+				<string>gltf</string>
+				<string>glb</string>
+			</array>
+			<key>CFBundleTypeOSTypes</key>
+			<array>
+				<string>????</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>mp4</string>
+				<string>mov</string>
+				<string>m4v</string>
+			</array>
+			<key>CFBundleTypeOSTypes</key>
+			<array>
+				<string>????</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSUIElement</key>
 	<false/>
 </dict>

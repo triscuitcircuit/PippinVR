@@ -1,17 +1,26 @@
 import AppKit
 
 @MainActor
-final class MenuActions: NSObject {
+final class MenuActions: NSObject, NSMenuItemValidation {
     static let shared = MenuActions()
 
     @objc func showAbout() {
         AboutWindowController.shared.show()
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        SparkleUpdater.shared.checkForUpdates(sender)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.action != #selector(checkForUpdates(_:)) || SparkleUpdater.shared.canCheckForUpdates
     }
 }
 
 @MainActor
 enum MainMenu {
     static func install(appName: String = "PippinVR") {
+        SparkleUpdater.shared.startIfConfigured()
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
@@ -23,6 +32,12 @@ enum MainMenu {
                                keyEquivalent: "")
         about.target = MenuActions.shared
         appMenu.addItem(about)
+
+        let updates = NSMenuItem(title: "Check for Updates…",
+                                 action: #selector(MenuActions.checkForUpdates(_:)),
+                                 keyEquivalent: "")
+        updates.target = MenuActions.shared
+        appMenu.addItem(updates)
         appMenu.addItem(.separator())
 
         appMenu.addItem(withTitle: "Hide \(appName)",
@@ -40,7 +55,7 @@ enum MainMenu {
         appMenu.addItem(withTitle: "Quit \(appName)",
                         action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")
-        
+
         let windowItem = NSMenuItem()
         mainMenu.addItem(windowItem)
         let windowMenu = NSMenu(title: "Window")

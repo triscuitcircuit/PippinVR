@@ -1,7 +1,5 @@
 import Foundation
 
-// MARK: Stream processing and declaration
-
 extension CodecType: Codable {
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
@@ -25,8 +23,6 @@ extension CodecType: Codable {
         self == .hevc ? 0 : 1
     }
 }
-
-// MARK: Display config reading
 
 struct DisplayEntry: Codable {
     var name: String = "pippinvr-display"
@@ -63,7 +59,6 @@ struct DisplayEntry: Codable {
                 }
             } else if let singleValue = try? decoder.singleValueContainer(),
                       let string = try? singleValue.decode(String.self) {
-                // Handle simple string format for backwards compatibility
                 if string == "virtualDisplay" {
                     self = .virtualDisplay
                 } else {
@@ -137,20 +132,11 @@ struct DisplayEntry: Codable {
     }
 }
 
-// MARK: Server Configuration
-
-/// How the Mac reaches the headset on launch.
-///
-/// `directMonado` uses the bundled Monado OpenXR runtime and its Quest Link
-/// driver over libusb. It talks to Meta's built-in streaming client, so it
-/// needs neither ADB nor a sideloaded Pippin client. `questClient` keeps the
-/// original standalone-client transport (TCP, optionally via `adb reverse`).
 enum ConnectionTransport: String, Codable {
     case directMonado
     case questClient
 }
 
-/// Direct headset timing is separate from APK capture FPS and desktop refresh.
 struct DirectUSBConfig: Codable {
     var refreshHz: Int?
     var rayIdleSeconds: Double?
@@ -177,10 +163,6 @@ struct DirectUSBConfig: Codable {
     }
 }
 
-/// An entry on the dashboard's Apps page -- exactly one of `game` (an
-/// exported executable/.app) or `project` (a Godot project directory).
-/// Mirrors `newt.py`'s `app_entry()` validation so the manager's `configure`
-/// and Pippin's own config agree on what a valid app looks like.
 struct AppEntry: Codable {
     var title: String = ""
     var game: String?
@@ -217,8 +199,6 @@ struct AppEntry: Codable {
 }
 
 struct ServerConfig: Codable {
-    // Defaults to the Quest client so existing installs launch exactly as
-    // before; Direct USB is opt-in via config, --direct-usb, or the menu bar.
     var transport: ConnectionTransport = .questClient
     var directUSB: DirectUSBConfig?
     var port: UInt16 = 9943
@@ -305,8 +285,7 @@ struct ServerConfig: Codable {
                 return (config, configPath)
             } catch {
                 FileHandle.standardError.write(Data("warning: failed to load \(configPath): \(error)\n".utf8))
-                // Preserve the user's invalid file for correction. Direct USB re-reads
-                // it before connecting and reports the error rather than starting.
+
                 return (ServerConfig(), configPath)
             }
         }
@@ -372,19 +351,14 @@ struct ServerConfig: Codable {
             throw ConfigError.tooManyDisplays(displays.count)
         }
         for d in displays {
-            // CRITICAL: For camera sources, dimensions are determined when capture starts
-            // iOS devices especially report 0x0 until the device is opened
-            // Skip validation for camera sources
             if case .camera = d.source {
-                // Camera sources: validate refresh rate only
                 guard d.refreshHz > 0, d.refreshHz <= 240 else {
                     throw ConfigError.badRefresh(d.name, d.refreshHz)
                 }
-                // Dimensions and alignment will be handled by the capture session
+
                 continue
             }
-            
-            // Virtual display sources: full validation
+
             guard d.width > 0, d.height > 0,
                   d.width <= 16384, d.height <= 16384
             else {

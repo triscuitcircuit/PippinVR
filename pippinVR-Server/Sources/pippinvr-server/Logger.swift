@@ -5,7 +5,7 @@ enum LogLevel: Int, Comparable {
     case info = 1
     case warning = 2
     case error = 3
-    
+
     var color: String {
         switch self {
         case .debug: return "\u{001B}[0;36m"
@@ -16,7 +16,7 @@ enum LogLevel: Int, Comparable {
     }
 
     static let reset = "\u{001B}[0m"
-    
+
     var name: String {
         switch self {
         case .debug: return "DEBUG"
@@ -25,7 +25,7 @@ enum LogLevel: Int, Comparable {
         case .error: return "ERROR"
         }
     }
-    
+
     static func < (lhs: LogLevel, rhs: LogLevel) -> Bool {
         lhs.rawValue < rhs.rawValue
     }
@@ -33,7 +33,7 @@ enum LogLevel: Int, Comparable {
 
 struct Logger {
     nonisolated(unsafe) static var minimumLevel: LogLevel = .debug
-    
+
     static func debug(
         _ message: String,
         file: String = #file,
@@ -78,18 +78,18 @@ struct Logger {
         line: Int
     ) {
         guard level >= minimumLevel else { return }
-        
+
         let className = extractClassName(from: file)
         let timestamp = formatTimestamp()
 
         print("[\(timestamp)] \(level.color)\(level.name)\(LogLevel.reset) [\(className).\(function)] \(message)")
     }
-    
+
     private static func extractClassName(from filePath: String) -> String {
         let filename = URL(fileURLWithPath: filePath).lastPathComponent
         return filename.replacingOccurrences(of: ".swift", with: "")
     }
-    
+
     private static func formatTimestamp() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
@@ -108,7 +108,7 @@ extension Logger {
         let contextMessage = "[\(context)] \(message)"
         log(contextMessage, level: .info, file: file, function: function, line: line)
     }
-    
+
     static func debug(
         _ message: String,
         context: String,

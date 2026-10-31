@@ -5,16 +5,24 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 @MainActor
-final class DirectStatusItemController: NSObject, ObservableObject {
+final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFileReceiving {
     private var item: NSStatusItem?
     private var timer: Timer?
     private var requestTimer: Timer?
     private let session: DirectMonadoSession
     private var virtualDisplays: [VirtualDisplay] = []
+    private var dashboardWasRunning = false
+    private var autoStartTask: Task<Void, Never>?
     private var panelSources: [CGDirectDisplayID?] = [nil]
     private var captureFPS = UserDefaults.standard.integer(forKey: "directCaptureFPS") == 0 ? 30 : UserDefaults.standard.integer(forKey: "directCaptureFPS")
     private var panelWidth = UserDefaults.standard.integer(forKey: "directPanelWidth") == 0 ? 1024 : UserDefaults.standard.integer(forKey: "directPanelWidth")
     @Published var running = false
+    @Published private(set) var usbLinkSpeed: String?
+    @Published private(set) var connectionError: String?
+    @Published private(set) var externalSession = false
+    @Published private(set) var activeApplication: String?
+    @Published private(set) var recoveringConnection = false
+    @Published private(set) var recoveryError: String?
     @Published var panelCount = 1
     @Published var deviceInfo: [USBLinkSpeed.DeviceInfo] = []
     @Published var settingsMenu = NSMenu()
@@ -22,6 +30,11 @@ final class DirectStatusItemController: NSObject, ObservableObject {
     @Published var environmentImageURL: URL?
     @Published var environmentFlippedVertically = false
     @Published var environmentFlippedHorizontally = false
+
+    @Published var environmentModelURLs: [URL] = []
+
+    private var sceneSyncedAt: Date?
+    var hasEnvironmentModel: Bool { !environmentModelURLs.isEmpty }
 
     @Published var nextScreenWidth = UserDefaults.standard.integer(forKey: "directNextScreenWidth") == 0 ? 1920 : UserDefaults.standard.integer(forKey: "directNextScreenWidth") {
         didSet { UserDefaults.standard.set(nextScreenWidth, forKey: "directNextScreenWidth") }
@@ -33,14 +46,36 @@ final class DirectStatusItemController: NSObject, ObservableObject {
     private var presentingPicker = false
     private var returnToDashboard = false
     private var settingsWindow: NSWindow?
+    private var pendingDockOpenedFiles: [DockOpenedFile] = []
+    private var dockOpenTimer: Timer?
+    private var dockOpenWaitingForSession = false
+    private var dockOpenNotBefore: Date?
+    private var dockOpenPanelLimitNotified = false
+
+    @Published var showScreenLabels = DirectScreenLabelPreferences.visible
+    @Published var wristClockEnabled = DirectWristClockPreferences.enabled
+    @Published var passthroughAllowed = DirectPassthroughPreferences.allowed
+    @Published var passthroughEnabled = DirectPassthroughPreferences.enabled
+    @Published var audioMode = DirectAudioPreferences.mode
+    @Published var audioMacSpeakers = DirectAudioPreferences.macSpeakers
+    @Published var audioStatus = DirectAudioPreferences.statusText
+    @Published var showMetricsInVR = UserDefaults.standard.bool(forKey: "directShowMetricsInVR")
+    @Published var metalFXEnabled = (UserDefaults.standard.object(forKey: "directMetalFXUpscale") as? Bool) ?? true
+    @Published var metalFXScale: Double = {
+        let stored = UserDefaults.standard.double(forKey: "directMetalFXScale")
+        return [0, 1.25, 1.5, 2].contains(stored) ? stored : 0
+    }()
+    let metricsStore = DirectMetricsStore()
     private var nextSerial: UInt32 = 0x7000
-    private let maxPanels = 24
+    static let panelLimit = 24
+    var maxPanels: Int { Self.panelLimit }
 
     init(session: DirectMonadoSession) { self.session = session }
 
     var configPath: String? { session.configPath }
 
     func install() {
+        metricsStore.start()
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         item?.button?.image = NSImage(systemSymbolName: "visionpro", accessibilityDescription: "PippinVR Direct USB")
@@ -58,6 +93,21 @@ final class DirectStatusItemController: NSObject, ObservableObject {
                     guard self.session.state.running else { continue }
                     if request == 3 || request >= 100 { self.launch3DApp(); continue }
                     if request == 4 { self.addMediaFile(); continue }
+                    if request == 5 {
+                        let message = VRViewWindowController.shared.toggleRecordingFromHeadset()
+                        self.session.command("notice:\(message)")
+                        continue
+                    }
+                    if request == 6 {
+                        let message = VRViewWindowController.shared.cycleModeFromHeadset()
+                        self.session.command("notice:\(message)")
+                        continue
+                    }
+                    if request == 7 {
+                        let message = VRViewWindowController.shared.toggleHeadsetVisibility()
+                        self.session.command("notice:\(message)")
+                        continue
+                    }
                     if request == 1 { self.addVirtualScreen() } else if request == 2 {
                         let item = NSMenuItem(); item.representedObject = "remove-last"
                         self.sendCommand(item)
@@ -69,6 +119,94 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         rebuild()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.rebuild() }
+        }
+        DockFileOpenRouter.shared.register(self)
+    }
+
+    func enqueueDockOpenedFiles(_ files: [DockOpenedFile]) {
+        let valid = files.filter { file in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: file.url.path, isDirectory: &isDirectory)
+                && !isDirectory.boolValue
+        }
+        guard !valid.isEmpty else { return }
+        Logger.info("Dock open queued: \(valid.map { $0.url.lastPathComponent }.joined(separator: ", "))")
+        pendingDockOpenedFiles.append(contentsOf: valid)
+
+        if session.applicationName != nil {
+            dockOpenWaitingForSession = true
+            returnToDashboard = true
+            if session.state.running { session.requestStop() }
+        } else if !session.state.running {
+            dockOpenWaitingForSession = true
+            session.connect()
+        }
+        startDockOpenTimerIfNeeded()
+        flushPendingDockOpenedFiles()
+    }
+
+    private func startDockOpenTimerIfNeeded() {
+        guard dockOpenTimer == nil else { return }
+        dockOpenTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.flushPendingDockOpenedFiles() }
+        }
+    }
+
+    private func flushPendingDockOpenedFiles() {
+        guard !pendingDockOpenedFiles.isEmpty else {
+            dockOpenTimer?.invalidate()
+            dockOpenTimer = nil
+            dockOpenWaitingForSession = false
+            dockOpenNotBefore = nil
+            return
+        }
+        if session.applicationName != nil {
+            dockOpenWaitingForSession = true
+            returnToDashboard = true
+            if session.state.running { session.requestStop() }
+            return
+        }
+        guard session.state.running else { return }
+        if dockOpenWaitingForSession {
+            guard let dockOpenNotBefore else {
+                dockOpenNotBefore = Date().addingTimeInterval(1)
+                return
+            }
+            guard Date() >= dockOpenNotBefore else { return }
+        }
+
+        var delivered = 0
+        while let file = pendingDockOpenedFiles.first {
+            switch file.kind {
+            case .model:
+                session.command("environment-model:\(file.url.path)")
+                environmentModelURLs.append(file.url)
+            case .video:
+                guard panelSources.count < maxPanels else {
+                    if !dockOpenPanelLimitNotified {
+                        session.command("notice:Panel limit reached — remove a panel to open the queued video")
+                        dockOpenPanelLimitNotified = true
+                    }
+                    if delivered > 0 { rebuild() }
+                    return
+                }
+                dockOpenPanelLimitNotified = false
+                let entry = NSMenuItem()
+                entry.representedObject = "add-media-file:\(file.url.path)"
+                sendCommand(entry)
+            }
+            pendingDockOpenedFiles.removeFirst()
+            delivered += 1
+            Logger.info("Dock open delivered: \(file.url.lastPathComponent)")
+        }
+
+        dockOpenWaitingForSession = false
+        dockOpenNotBefore = nil
+        dockOpenTimer?.invalidate()
+        dockOpenTimer = nil
+        if delivered > 0 {
+            session.command("notice:Opened \(delivered) file\(delivered == 1 ? "" : "s") from Dock")
+            rebuild()
         }
     }
 
@@ -85,10 +223,31 @@ final class DirectStatusItemController: NSObject, ObservableObject {
     }
 
     private func rebuild() {
+        wristClockEnabled = DirectWristClockPreferences.enabled
+        let labels = DirectScreenLabelPreferences.visible
+        if showScreenLabels != labels { showScreenLabels = labels }
+        passthroughAllowed = DirectPassthroughPreferences.allowed
+        if !passthroughAllowed { AddonAPIServer.shared.setCameraAccess(false) }
+        passthroughEnabled = DirectPassthroughPreferences.enabled
+
+        if audioMode != DirectAudioPreferences.mode { audioMode = DirectAudioPreferences.mode }
+        if audioMacSpeakers != DirectAudioPreferences.macSpeakers { audioMacSpeakers = DirectAudioPreferences.macSpeakers }
+        let status = session.state.running ? DirectAudioPreferences.statusText : nil
+        if audioStatus != status { audioStatus = status }
+        syncSavedScene()
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let present = USBLinkSpeed.detectQuestLinkSpeed() != nil
+        let linkSpeed = USBLinkSpeed.detectQuestLinkSpeed()
+        let present = linkSpeed != nil
         let state = session.state
+        let dashboardRunning = state.running && !state.externallyActive && session.applicationName == nil
+        if dashboardRunning && !dashboardWasRunning { startAutomaticAddons() }
+        if !dashboardRunning { autoStartTask?.cancel(); autoStartTask = nil }
+        dashboardWasRunning = dashboardRunning
+        usbLinkSpeed = linkSpeed
+        connectionError = state.error
+        externalSession = state.externallyActive
+        activeApplication = session.applicationName
         updateStatusColor(running: state.running, present: present)
         if state.externallyActive {
             menu.addItem(withTitle: "Headset in use by another app (e.g. Godot Play)", action: nil, keyEquivalent: "")
@@ -144,6 +303,60 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         rebuildSettings()
     }
 
+    private func startAutomaticAddons() {
+        let manager = AddonManager.shared
+        let ids = manager.addons.filter { $0.autoStart == true && $0.manifest.entrypoint != nil }.map(\.id)
+        guard !ids.isEmpty else { return }
+        let api = AddonAPIServer.shared
+        if !api.running && !api.starting {
+            startAddonAPI()
+        }
+        autoStartTask = Task { @MainActor [weak self] in
+            for _ in 0..<100 where api.starting && !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard !Task.isCancelled, let self, self.session.state.running, self.session.applicationName == nil else { return }
+            for id in ids where !manager.runningIDs.contains(id) {
+                guard api.running else { manager.reportStartError(api.error ?? "Could not start the local integration API.", id: id); continue }
+                do { try manager.run(id: id) } catch { manager.reportStartError(error.localizedDescription, id: id) }
+            }
+        }
+    }
+
+    func startAddonAPI() {
+        AddonAPIServer.shared.start(cameraAllowed: { [weak self] in self?.passthroughAllowed ?? false }, createDisplay: { [weak self] index in
+            guard let self else { throw AddonError.invalid("Direct USB is unavailable.") }
+            return try self.createAddonDisplay(index: index)
+        }, removeDisplay: { [weak self] id in self?.removeAddonDisplay(id: id) }) { [weak self] in
+            self?.session.state.running ?? false
+        }
+    }
+
+    private func createAddonDisplay(index: Int) throws -> UInt32 {
+        guard session.state.running && session.applicationName == nil else { throw AddonError.invalid("Connect Direct USB first.") }
+        guard panelSources.count < maxPanels else { throw AddonError.invalid("The 24-screen limit has been reached.") }
+        var config = DisplayConfig()
+        config.width = 960; config.height = 600; config.refreshHz = Double(captureFPS); config.hiDPI = false
+        config.serial = nextSerial; config.productID = 0x1234 + nextSerial; nextSerial += 1
+        config.name = "PippinVR Add-on \(virtualDisplays.count + 1)"
+        let display = try VirtualDisplay(config: config)
+        virtualDisplays.append(display)
+        panelSources.append(display.displayID)
+        fixupDisplayArrangement()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.fixupDisplayArrangement() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.fixupDisplayArrangement() }
+        session.command("add-demo-display:\(display.displayID):\(index)")
+        return display.displayID
+    }
+
+    private func removeAddonDisplay(id: UInt32) {
+        guard let index = panelSources.firstIndex(where: { $0 == id }) else { return }
+        panelSources.remove(at: index)
+        if session.state.running { session.command("remove-display:\(id)") }
+        virtualDisplays.removeAll { $0.displayID == id }
+        fixupDisplayArrangement()
+    }
+
     private func rebuildSettings() {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -176,10 +389,16 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         menu.addItem(withTitle: "Hide dashboard: sticks move / resize · squeeze grabs and rotates", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
         let stereo = NSMenu()
-        for (index, title) in ["Flat (2D)", "Side-by-side 3D", "Side-by-side 3D (swap eyes)", "Over-under 3D", "Over-under 3D (swap eyes)"].enumerated() {
+        for (index, title) in ["Flat (2D)", "Side-by-side 3D", "Side-by-side 3D (swap eyes)", "Over-under 3D", "Over-under 3D (swap eyes)", "Side-by-side 3D (full width)", "Side-by-side 3D (full width, swap eyes)"].enumerated() {
             action(title, "stereo:\(index)", menu: stereo)
         }
+        let alignment = NSMenu()
+        for offset in [-30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30] {
+            let title = offset == 0 ? "No alignment" : "\(offset > 0 ? "+" : "")\(offset)%"
+            action(title, "stereo-align:\(offset)", menu: alignment)
+        }
         menu.addItem(withTitle: "Selected Screen 3D", action: nil, keyEquivalent: "").submenu = stereo
+        menu.addItem(withTitle: "Stereo eye alignment", action: nil, keyEquivalent: "").submenu = alignment
         let fps = NSMenu()
         for value in [15, 30, 60] {
             action("\(value) FPS", "fps:\(value)", menu: fps)
@@ -278,8 +497,9 @@ final class DirectStatusItemController: NSObject, ObservableObject {
     }
 
     @objc private func addVirtualScreen() {
-        guard session.state.running && panelSources.count < maxPanels else {
-            session.command("notice:Six-panel limit reached")
+        guard session.state.running else { return }
+        guard panelSources.count < maxPanels else {
+            session.command("notice:\(maxPanels)-panel limit reached")
             return
         }
         do {
@@ -356,6 +576,97 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         rebuild()
     }
 
+    func setWristClockEnabled(_ enabled: Bool) {
+        wristClockEnabled = enabled
+        do { try DirectWristClockPreferences.setEnabled(enabled) } catch { Logger.warning("Could not save wrist-clock setting: \(error)") }
+        session.command(enabled ? "wrist-clock:1" : "wrist-clock:0")
+    }
+
+    private func syncSavedScene() {
+        guard session.state.running, let modified = DirectScenePreferences.modificationDate,
+              modified != sceneSyncedAt, let scene = DirectScenePreferences.load() else { return }
+        sceneSyncedAt = modified
+        environmentModelURLs = scene.models
+        environmentImageURL = scene.environment
+        environmentFlippedVertically = scene.flippedVertically
+        environmentFlippedHorizontally = scene.flippedHorizontally
+    }
+
+    func setShowScreenLabels(_ visible: Bool) {
+        do {
+            try DirectScreenLabelPreferences.setVisible(visible)
+            showScreenLabels = visible
+            if session.state.running { session.command("screen-labels:reload") }
+        } catch {
+            Logger.warning("Could not save screen label preference: \(error)")
+        }
+    }
+
+    func setPassthroughAllowed(_ allowed: Bool) {
+        if allowed {
+            let alert = NSAlert()
+            alert.messageText = "Allow headset camera access?"
+            alert.informativeText = """
+                PippinVR will receive video from your headset’s passthrough cameras over USB \
+                and show it in a portal inside VR. The cameras stream only while the portal is \
+                open. Video can also appear in recordings and, if separately enabled, be shared \
+                with local API clients.
+
+                Takes effect from the next headset session. You can turn this off at any time.
+                """
+            alert.addButton(withTitle: "Allow")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                passthroughAllowed = false
+                return
+            }
+        }
+        do { try DirectPassthroughPreferences.setAllowed(allowed) } catch { Logger.warning("Could not save camera access setting: \(error)") }
+        passthroughAllowed = DirectPassthroughPreferences.allowed
+        if !passthroughAllowed { AddonAPIServer.shared.setCameraAccess(false) }
+        passthroughEnabled = DirectPassthroughPreferences.enabled
+        session.command("passthrough:reload")
+    }
+
+    func setAudioMode(_ mode: DirectAudioPreferences.Mode) {
+        do { try DirectAudioPreferences.setMode(mode) } catch { Logger.warning("Could not save headset sound setting: \(error)") }
+        audioMode = DirectAudioPreferences.mode
+        session.command("audio:reload")
+    }
+
+    func setAudioMacSpeakers(_ on: Bool) {
+        do { try DirectAudioPreferences.setMacSpeakers(on) } catch { Logger.warning("Could not save Mac speakers setting: \(error)") }
+        audioMacSpeakers = DirectAudioPreferences.macSpeakers
+        session.command("audio:reload")
+    }
+
+    func setPassthroughEnabled(_ enabled: Bool) {
+        guard passthroughAllowed || !enabled else { return }
+        do { try DirectPassthroughPreferences.setEnabled(enabled) } catch { Logger.warning("Could not save passthrough portal setting: \(error)") }
+        passthroughEnabled = DirectPassthroughPreferences.enabled
+        session.command("passthrough:reload")
+    }
+
+    func setShowMetricsInVR(_ enabled: Bool) {
+        showMetricsInVR = enabled
+        UserDefaults.standard.set(enabled, forKey: "directShowMetricsInVR")
+        session.command(enabled ? "metrics:1" : "metrics:0")
+    }
+
+    func setMetalFXScale(_ scale: Double) {
+        guard [0, 1.25, 1.5, 2].contains(scale) else { return }
+        metalFXScale = scale
+        UserDefaults.standard.set(scale, forKey: "directMetalFXScale")
+        let value = scale == 0 ? "0" : (scale == 2 ? "2" : String(scale))
+        session.command("metalfx-scale:\(value)")
+    }
+
+    func setMetalFXEnabled(_ enabled: Bool) {
+        metalFXEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "directMetalFXUpscale")
+        session.command(enabled ? "metalfx:1" : "metalfx:0")
+    }
+
     func chooseEnvironmentImage() {
         guard !presentingPicker else { return }
         presentingPicker = true
@@ -381,18 +692,78 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         environmentImageURL = nil
         environmentFlippedVertically = false
         environmentFlippedHorizontally = false
+        environmentModelURLs.removeAll()
+    }
+
+    func setEnvironmentFlipVertical(_ newValue: Bool) {
+        guard environmentImageURL != nil, environmentFlippedVertically != newValue else { return }
+        session.command("environment-flip-v")
+        environmentFlippedVertically = newValue
+    }
+
+    func setEnvironmentFlipHorizontal(_ newValue: Bool) {
+        guard environmentImageURL != nil, environmentFlippedHorizontally != newValue else { return }
+        session.command("environment-flip-h")
+        environmentFlippedHorizontally = newValue
     }
 
     func toggleEnvironmentFlipVertical() {
-        guard environmentImageURL != nil else { return }
-        session.command("environment-flip-v")
-        environmentFlippedVertically.toggle()
+        setEnvironmentFlipVertical(!environmentFlippedVertically)
     }
 
     func toggleEnvironmentFlipHorizontal() {
-        guard environmentImageURL != nil else { return }
-        session.command("environment-flip-h")
-        environmentFlippedHorizontally.toggle()
+        setEnvironmentFlipHorizontal(!environmentFlippedHorizontally)
+    }
+
+    private static var modelContentTypes: [UTType] {
+        var types: [UTType] = [.usdz, .threeDContent, .sceneKitScene]
+        for ext in ["usdz", "usd", "usda", "usdc", "obj", "gltf", "glb"] {
+            if let type = UTType(filenameExtension: ext), !types.contains(type) {
+                types.append(type)
+            }
+        }
+        return types
+    }
+
+    func chooseEnvironmentModel() {
+        guard !presentingPicker else { return }
+        presentingPicker = true
+        defer { presentingPicker = false }
+        guard session.state.running && session.applicationName == nil else { return }
+        let picker = NSOpenPanel()
+        picker.title = "Choose a 3D environment model (.usdz/.obj/.gltf/.glb)"
+        picker.message = "Supports USDZ (.usdz/.usd), Wavefront OBJ (.obj + .mtl), and glTF 2.0 (.gltf/.glb)."
+        picker.allowedContentTypes = Self.modelContentTypes
+        NSApp.activate(ignoringOtherApps: true)
+        guard picker.runModal() == .OK, let url = picker.url else {
+            session.command("notice:3D model selection cancelled"); return
+        }
+        guard !url.path.contains("\n") && !url.path.contains("\r") else { return }
+        session.command("environment-model:\(url.path)")
+        environmentModelURLs.append(url)
+        rebuild()
+    }
+
+    func scaleSelectedEnvironmentModel(up: Bool) {
+        guard hasEnvironmentModel else { return }
+        session.command(up ? "environment-scale-up" : "environment-scale-down")
+    }
+
+    func rotateSelectedEnvironmentModel() {
+        guard hasEnvironmentModel else { return }
+        session.command("environment-rotate-y")
+    }
+
+    func toggleSelectedEnvironmentModelPosition() {
+        guard hasEnvironmentModel else { return }
+        session.command("environment-toggle-origin")
+    }
+
+    func removeSelectedEnvironmentModel() {
+        guard hasEnvironmentModel else { return }
+        session.command("remove-model")
+        if !environmentModelURLs.isEmpty { environmentModelURLs.removeLast() }
+        rebuild()
     }
 
     func presentAddAppPicker() {
@@ -533,6 +904,31 @@ final class DirectStatusItemController: NSObject, ObservableObject {
         }
     }
 
+    func recoverConnection() {
+        guard !recoveringConnection, !switchingApplication, !shuttingDown,
+              !session.state.externallyActive, session.applicationName == nil,
+              USBLinkSpeed.detectQuestLinkSpeed() != nil else { return }
+        recoveryError = nil
+        recoveringConnection = true
+        returnToDashboard = false
+        Task { @MainActor in
+            if session.state.running { await session.stopAndWait() }
+            guard !shuttingDown else { recoveringConnection = false; return }
+            if session.state.running {
+                recoveryError = "The session has not stopped. Try disconnecting from the menu bar."
+            } else if session.state.externallyActive || session.applicationName != nil {
+                recoveryError = "Another VR app is using the headset. Close it before reconnecting."
+            } else if USBLinkSpeed.detectQuestLinkSpeed() == nil {
+                recoveryError = "The Quest is no longer detected over USB. Check the cable and try again."
+            } else {
+                metricsStore.clearCameraReports()
+                session.connect()
+            }
+            recoveringConnection = false
+            rebuild()
+        }
+    }
+
     @objc private func toggleConnection() {
         returnToDashboard = session.applicationName != nil
         if session.state.running { session.requestStop() } else { session.connect() }
@@ -564,6 +960,10 @@ final class DirectStatusItemController: NSObject, ObservableObject {
 
 @MainActor
 final class DirectApplicationDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        DockFileOpenRouter.shared.open(urls)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         beginShutdown(exitCode: 0)
         return .terminateCancel

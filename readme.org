@@ -152,5 +152,32 @@ Contributions are welcome and encouraged (as per the GNUv3 License). To contribu
   pre-commit install
 #+end_src
 This project will take contributions in the form of pull-requests.
+* Acknowledgements
+PippinVR builds on these major open-source projects and code bases. Full
+license texts for the bundled runtime libraries are in the app bundle at
+~Contents/Resources/Licenses/~ where the upstream distribution provides one.
+
+- *Max Thomas (shinyquagsire23)* :: Original macOS Quest Link port of
+  Monado (~shinyquagsire23/monado~, branch ~macos_ql_merge~, 2023), which
+  the Quest Link driver in this project was from, including the
+  XRSP protocol implementation.
+- *Monado contributors (Collabora and the freedesktop.org community)* ::
+  The OpenXR runtime, compositor, and driver framework.
+- *WiVRn contributors* :: The streaming video encoder, YUV conversion,
+  and VideoToolbox encoder code adapted by the Quest Link driver.
+- *Khronos Group* :: The OpenXR and Vulkan APIs and the OpenXR SDK loader
+  bundled with the runtime.
+- *MoltenVK contributors (The Brenwill Workshop and Khronos)* ::
+  Vulkan-to-Metal translation used by Monado and Newt on macOS. (The
+  Vulkan SDK distribution used for local builds does not ship a separate
+  MoltenVK license file; MoltenVK is Apache License 2.0.)
+- *libusb contributors* :: USB device access for the Quest Link transport.
+- *Cap'n Proto contributors* :: Serialization used by the XRSP protocol.
+- *Eigen contributors* :: Linear algebra used by Monado.
+- *Boost.PFR contributors* :: Reflection utilities used by Monado.
+- *SDL contributors* :: Platform/window support libraries bundled with
+  the Monado runtime.
+
+PippinVR itself is by triscuitcircuit.
 * License
 GNU GENERAL PUBLIC LICENSE VERSION 3 (GPLv3).

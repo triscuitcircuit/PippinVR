@@ -15,4 +15,4 @@ inline bool IsSimulatedSystemName(const char* name) {
     return false;
 }
 
-#endif // NEWT_SYSTEMCHECK_H
+#endif

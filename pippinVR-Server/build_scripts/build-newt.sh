@@ -21,11 +21,14 @@ elif [ -d "${OPENXR_BUILD_DIR:-${PIPPIN_SERVER_DIR}/third_party/openxr-sdk/build
 fi
 cmake -S "${NEWT_SOURCE}" -B "${NEWT_BUILD}" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}" \
     -DNEWT_WITH_USB=OFF -DBUILD_TESTING=ON \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     ${OPENXR_ARGS[@]+"${OPENXR_ARGS[@]}"} \
     ${SDK_ARGS[@]+"${SDK_ARGS[@]}"}
 cmake --build "${NEWT_BUILD}" --parallel 6
-ctest --test-dir "${NEWT_BUILD}" --output-on-failure
+if [ "${NEWT_SKIP_TESTS:-0}" != "1" ]; then
+    ctest --test-dir "${NEWT_BUILD}" --output-on-failure
+fi
 cmake --install "${NEWT_BUILD}" --prefix "${NEWT_PREFIX}"
 cp "${NEWT_PREFIX}/include/NewtLog.h" "${PIPPIN_SERVER_DIR}/NewtBridge/include/"

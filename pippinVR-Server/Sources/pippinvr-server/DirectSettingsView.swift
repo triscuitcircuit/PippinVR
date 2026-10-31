@@ -1,8 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The settings window and status menu share one controller so closing Settings
-/// never tears down the virtual displays or the USB session.
 struct DirectSettingsView: View {
     @ObservedObject var controller: DirectStatusItemController
 
@@ -28,7 +26,7 @@ struct DirectSettingsView: View {
                     Spacer()
                     control("Add Screen", prominent: true)
                 }
-                Text(controller.running ? "\(controller.panelCount) of 6 panels in this session" : "Connect USB Direct from the menu bar to add screens and feeds.")
+                Text(controller.running ? "\(controller.panelCount) of \(controller.maxPanels) panels in this session" : "Connect USB Direct from the menu bar to add screens and feeds.")
                     .foregroundStyle(.secondary)
                 control("Add Existing Screen")
                 control("Add Camera Feed")

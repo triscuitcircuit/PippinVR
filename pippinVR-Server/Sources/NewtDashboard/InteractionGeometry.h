@@ -32,6 +32,16 @@ inline bool RayQuad(const XrPosef& ray, const XrPosef& panel, float width, float
     if (std::abs(hit.x) > width/2 || std::abs(hit.y) > height/2) return false;
     distance = t; u = hit.x / width + 0.5f; return true;
 }
+
+inline bool RayQuadUV(const XrPosef& ray, const XrPosef& panel, float width, float height, float& distance, float& u,
+                      float& v) {
+    if (!RayQuad(ray, panel, width, height, distance, u)) return false;
+    const auto inverse = Conjugate(panel.orientation);
+    const Vec3 origin = Rotate(inverse, {ray.position.x-panel.position.x, ray.position.y-panel.position.y, ray.position.z-panel.position.z});
+    const Vec3 direction = Rotate(inverse, Rotate(ray.orientation, {0, 0, -1}));
+    v = (origin.y + direction.y * distance) / height + 0.5f;
+    return true;
+}
 inline bool RayDock(const Vec3& origin, const Vec3& direction, float& distance, float& u, float& v, float radius = kDockRadius) {
     const float a = direction.x*direction.x + direction.z*direction.z;
     const float b = 2*(origin.x*direction.x + origin.z*direction.z);
@@ -111,12 +121,14 @@ inline bool RayScreen(const XrPosef& ray,const XrPosef& pose,float width,float a
 
 inline std::vector<VertexPC> MakePanelBar(float arc) {
     auto vertices=MakeScreen(arc);
-    // x/z scale with screen width, but bar height stays a fixed 75 mm
-    // (drawn with Scale({width,1,width}) -- Y isn't touched at draw time,
-    // so the unit mesh's own Y range has to already equal 0.075).
+
+
+
     for(auto& vertex:vertices) vertex.pos[1]*=0.075f;
     return vertices;
 }
+
+
 
 inline std::vector<VertexPC> MakeEnvironmentSphere(int lonSegments=48, int latSegments=24) {
     std::vector<VertexPC> out;
@@ -179,4 +191,4 @@ inline DockButtonMesh MakeDockButton(int button,bool selected) {
     return mesh;
 }
 
-#endif // NEWT_INTERACTIONGEOMETRY_H
+#endif

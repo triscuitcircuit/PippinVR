@@ -24,7 +24,6 @@ final class DisplayPipeline: @unchecked Sendable {
     private var _bytes = 0
     private var _keyframes = 0
 
-    /// Set by the session to route encoded frames into the shared sink.
     var onEncodedFrame: ((EncodedFrame, UInt8) -> Void)?
     var onLog: ((String) -> Void)?
 
@@ -35,7 +34,6 @@ final class DisplayPipeline: @unchecked Sendable {
     }
 
     func createDisplay(index: Int) throws {
-        // Only create virtual display for virtualDisplay source type
         guard case .virtualDisplay = entry.source else {
             onLog?("stream \(streamID) '\(entry.name)': camera source, no virtual display needed")
             return

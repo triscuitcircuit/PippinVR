@@ -17,4 +17,4 @@ typedef NS_ENUM(NSInteger, IOSLogLevel) {
 
 void IOSLog(IOSLogLevel level, NSString* module, const char* function, NSString* format, ...) NS_FORMAT_FUNCTION(4,5);
 
-#endif // IOS_DEVICE_CORE_LOGGER_H
+#endif

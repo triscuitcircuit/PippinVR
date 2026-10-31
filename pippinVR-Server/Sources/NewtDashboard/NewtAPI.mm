@@ -27,7 +27,7 @@ std::deque<std::string> TakeCommands() {
     pending.swap(commands);
     return pending;
 }
-} // namespace NewtInternal
+}
 using namespace NewtInternal;
 void HandleSignal(int) { gFadeRequested.store(true); }
 
@@ -46,7 +46,7 @@ extern "C" int Newt_Run(void) {
             NewtXR app;
             app.Run();
         } catch (const SimulatedRefused&) {
-            return 2; // Simulated fallback refusal (already logged).
+            return 2;
         } catch (const std::exception& e) {
             Newt_Logf(NEWT_LOG_ERROR, "fatal: %s", e.what());
             return 1;

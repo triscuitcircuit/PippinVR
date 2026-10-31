@@ -1,5 +1,9 @@
 #ifndef NEWT_NEWT_H
 #define NEWT_NEWT_H
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <CoreFoundation/CoreFoundation.h>
 
 // SPDX-License-Identifier: MIT
 // Public C / C++ API for embedding the Newt XR session.
@@ -25,6 +29,11 @@ void Newt_Command(const char* command);
 
 // Host requests: 0 none, 1 create display, 2 remove last, 3 choose app, 4 choose media.
 int Newt_PollHostRequest(void);
+
+bool Newt_VRMirrorStart(void);
+void Newt_VRMirrorStop(void);
+CFDataRef Newt_VRMirrorCopy(uint64_t* sequence, uint32_t* width, uint32_t* height,
+                            uint32_t* format) CF_RETURNS_RETAINED;
 
 #ifdef __cplusplus
 }

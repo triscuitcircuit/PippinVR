@@ -1,36 +1,278 @@
 #include "include/NewtLog.h"
+#include "Metrics.h"
+#include "UI.h"
+#include "MetalFXResolution.h"
 #include "Newt/CaptureInternal.h"
 #import <AVFoundation/AVFoundation.h>
+#import <CoreVideo/CoreVideo.h>
+#import <IOSurface/IOSurface.h>
+#import <Metal/Metal.h>
+#import <MetalFX/MetalFX.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <iostream>
 using namespace NewtCaptureInternal;
+
+namespace {
+std::atomic<bool> gMetalFXEnabled{true};
+std::atomic<bool> gMetalFXEnabledInitialized{false};
+std::atomic<bool> gMetalFXActive{false};
+std::atomic<float> gMetalFXScale{0.0f};
+std::atomic<uint32_t> gMetalFXInW{0}, gMetalFXInH{0}, gMetalFXOutW{0}, gMetalFXOutH{0};
+
+bool InitialMetalFXEnabled() {
+    const char* env = std::getenv("NEWT_METALFX_UPSCALE");
+    if (env) return std::strcmp(env, "0") != 0;
+    NSNumber* value = [[NSUserDefaults standardUserDefaults] objectForKey:@"directMetalFXUpscale"];
+    return value ? value.boolValue : true;
+}
+}
+
+void SetMetalFXScale(float scale) {
+    if (ValidMetalFXScale(scale)) {
+        gMetalFXScale.store(scale, std::memory_order_relaxed);
+        gMetalFXActive.store(false, std::memory_order_relaxed);
+    }
+}
+
+float MetalFXScale() { return gMetalFXScale.load(std::memory_order_relaxed); }
+
+void LoadMetalFXSettings() {
+    SetMetalFXUpscaleEnabled(InitialMetalFXEnabled());
+    float scale = [[NSUserDefaults standardUserDefaults] floatForKey:@"directMetalFXScale"];
+    if (const char* value = std::getenv("NEWT_METALFX_SCALE")) {
+        char* end = nullptr;
+        scale = std::strtof(value, &end);
+        if (end == value || *end != '\0') scale = 0;
+    }
+    SetMetalFXScale(ValidMetalFXScale(scale) ? scale : 0);
+}
+
+void SetMetalFXUpscaleEnabled(bool enabled) {
+    gMetalFXEnabled.store(enabled, std::memory_order_relaxed);
+    gMetalFXEnabledInitialized.store(true, std::memory_order_relaxed);
+    if (!enabled) gMetalFXActive.store(false, std::memory_order_relaxed);
+}
+
+bool MetalFXUpscaleEnabled() {
+    if (!gMetalFXEnabledInitialized.load(std::memory_order_relaxed)) {
+        gMetalFXEnabled.store(InitialMetalFXEnabled(), std::memory_order_relaxed);
+        gMetalFXEnabledInitialized.store(true, std::memory_order_relaxed);
+    }
+    return gMetalFXEnabled.load(std::memory_order_relaxed);
+}
+
+bool MetalFXUpscaleActive() {
+    return gMetalFXActive.load(std::memory_order_relaxed);
+}
+
+void GetMetalFXDimensions(uint32_t& inputWidth, uint32_t& inputHeight,
+                          uint32_t& outputWidth, uint32_t& outputHeight) {
+    inputWidth = gMetalFXInW.load(std::memory_order_relaxed);
+    inputHeight = gMetalFXInH.load(std::memory_order_relaxed);
+    outputWidth = gMetalFXOutW.load(std::memory_order_relaxed);
+    outputHeight = gMetalFXOutH.load(std::memory_order_relaxed);
+}
 @interface NewtScreenCaptureDelegate : NSObject <SCStreamOutput, SCStreamDelegate>
 @property (nonatomic, assign) ScreenCaptureManager* manager;
 @property (nonatomic, strong) SCStream* stream;
 @property (nonatomic, strong) dispatch_queue_t captureQueue;
 @property (nonatomic, strong) dispatch_source_t fallbackTimer;
+@property (nonatomic, strong) dispatch_source_t mirrorFilterTimer;
+@property (nonatomic, strong) NSSet<NSNumber*>* mirrorExcludedWindows;
+@property (nonatomic, assign) BOOL mirrorFilterPending;
 @property (nonatomic, copy) NSString* displayLabel;
 @property (nonatomic, assign) NSUInteger displayRetries;
+@property (nonatomic, strong) id<MTLDevice> mtlDevice;
+@property (nonatomic, strong) id<MTLCommandQueue> mtlQueue;
+@property (nonatomic, strong) id<MTLFXSpatialScaler> spatialScaler;
+@property (nonatomic, assign) size_t scalerInW;
+@property (nonatomic, assign) size_t scalerInH;
+@property (nonatomic, assign) size_t scalerOutW;
+@property (nonatomic, assign) size_t scalerOutH;
 - (instancetype)initWithManager:(ScreenCaptureManager*)mgr;
 - (void)startStreamForDisplayIndex:(uint32_t)idx;
 - (void)stopStream;
+- (void)refreshMirrorFilter;
 @end
 
-@implementation NewtScreenCaptureDelegate
+static NSArray<SCWindow*>* VRViewerWindows(SCShareableContent* content) API_AVAILABLE(macos(12.3)) {
+    NSUserDefaults* preferences = [[NSUserDefaults alloc] initWithSuiteName:@"com.pippinvr.server"];
+    [preferences synchronize];
+    NSNumber* hide = [preferences objectForKey:@"directVRViewHideFromHeadset"];
+    if (hide && !hide.boolValue) return @[];
+    NSMutableArray<SCWindow*>* windows = [NSMutableArray array];
+    for (SCWindow* window in content.windows) {
+        NSString* title = window.title;
+        if ([window.owningApplication.bundleIdentifier isEqualToString:@"com.pippinvr.server"] &&
+            ([title isEqualToString:@"PippinVR — VR View"] || [title isEqualToString:@"PippinVR — Clean VR View"])) {
+            [windows addObject:window];
+        }
+    }
+    return windows;
+}
+
+static NSSet<NSNumber*>* VRViewerWindowIDs(NSArray<SCWindow*>* windows) API_AVAILABLE(macos(12.3)) {
+    NSMutableSet<NSNumber*>* ids = [NSMutableSet set];
+    for (SCWindow* window in windows) [ids addObject:@(window.windowID)];
+    return ids;
+}
+
+@implementation NewtScreenCaptureDelegate {
+    CVPixelBufferPoolRef _upscalePool;
+}
 
 - (instancetype)initWithManager:(ScreenCaptureManager*)mgr {
     if ((self = [super init])) {
         _manager = mgr;
         _captureQueue = dispatch_queue_create("com.newt.xr.screencapture", DISPATCH_QUEUE_SERIAL);
         _displayLabel = @"macOS Desktop  •  Live Screen Share";
+        _upscalePool = nullptr;
     }
     return self;
 }
 
+- (void)dealloc {
+    if (_upscalePool) {
+        CVPixelBufferPoolRelease(_upscalePool);
+        _upscalePool = nullptr;
+    }
+}
+
+- (CVPixelBufferRef)createUpscaledPixelBuffer:(CVPixelBufferRef)srcPB {
+    if (!srcPB) return nullptr;
+    if (!MetalFXUpscaleEnabled()) {
+        gMetalFXActive.store(false, std::memory_order_relaxed);
+        return nullptr;
+    }
+    if (CVPixelBufferGetPixelFormatType(srcPB) != kCVPixelFormatType_32BGRA) return nullptr;
+    IOSurfaceRef srcSurface = CVPixelBufferGetIOSurface(srcPB);
+    if (!srcSurface) return nullptr;
+
+    const size_t srcW = CVPixelBufferGetWidth(srcPB);
+    const size_t srcH = CVPixelBufferGetHeight(srcPB);
+    if (srcW < 64 || srcH < 64 || srcW >= 3840) return nullptr;
+
+    const auto output = MetalFXOutputResolution(static_cast<uint32_t>(srcW), static_cast<uint32_t>(srcH), MetalFXScale());
+    if (output.width == 0) return nullptr;
+    const size_t dstW = output.width, dstH = output.height;
+
+    if (!_mtlDevice) {
+        _mtlDevice = MTLCreateSystemDefaultDevice();
+        if (_mtlDevice) {
+            _mtlQueue = [_mtlDevice newCommandQueue];
+        }
+    }
+    if (!_mtlDevice || !_mtlQueue) return nullptr;
+    if (![MTLFXSpatialScalerDescriptor supportsDevice:_mtlDevice]) return nullptr;
+
+    if (!_spatialScaler || _scalerInW != srcW || _scalerInH != srcH ||
+        _scalerOutW != dstW || _scalerOutH != dstH || !_upscalePool) {
+        MTLFXSpatialScalerDescriptor* desc = [[MTLFXSpatialScalerDescriptor alloc] init];
+        desc.inputWidth = srcW;
+        desc.inputHeight = srcH;
+        desc.outputWidth = dstW;
+        desc.outputHeight = dstH;
+        desc.colorTextureFormat = MTLPixelFormatBGRA8Unorm;
+        desc.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
+        desc.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
+        _spatialScaler = [desc newSpatialScalerWithDevice:_mtlDevice];
+        if (!_spatialScaler) return nullptr;
+
+        if (_upscalePool) {
+            CVPixelBufferPoolRelease(_upscalePool);
+            _upscalePool = nullptr;
+        }
+        NSDictionary* poolAttrs = @{
+            (id)kCVPixelBufferPoolMinimumBufferCountKey : @4
+        };
+        NSDictionary* pbAttrs = @{
+            (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+            (id)kCVPixelBufferWidthKey : @(dstW),
+            (id)kCVPixelBufferHeightKey : @(dstH),
+            (id)kCVPixelBufferMetalCompatibilityKey : @YES,
+            (id)kCVPixelBufferIOSurfacePropertiesKey : @{}
+        };
+        if (CVPixelBufferPoolCreate(kCFAllocatorDefault,
+                                    (__bridge CFDictionaryRef)poolAttrs,
+                                    (__bridge CFDictionaryRef)pbAttrs,
+                                    &_upscalePool) != kCVReturnSuccess || !_upscalePool) {
+            _spatialScaler = nil;
+            return nullptr;
+        }
+        _scalerInW = srcW;
+        _scalerInH = srcH;
+        _scalerOutW = dstW;
+        _scalerOutH = dstH;
+        Newt_Logf(NEWT_LOG_INFO,
+                  "MetalFX Spatial Scaler active (%zux%zu -> %zux%zu, Perceptual)",
+                  srcW, srcH, dstW, dstH);
+    }
+
+    CVPixelBufferRef dstPB = nullptr;
+    if (CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, _upscalePool, &dstPB) != kCVReturnSuccess || !dstPB) {
+        return nullptr;
+    }
+    IOSurfaceRef dstSurface = CVPixelBufferGetIOSurface(dstPB);
+    if (!dstSurface) {
+        CVPixelBufferRelease(dstPB);
+        return nullptr;
+    }
+
+    MTLTextureDescriptor* srcDesc =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                           width:srcW
+                                                          height:srcH
+                                                       mipmapped:NO];
+    srcDesc.storageMode = MTLStorageModeShared;
+    srcDesc.usage = _spatialScaler.colorTextureUsage | MTLTextureUsageShaderRead;
+    id<MTLTexture> srcTex = [_mtlDevice newTextureWithDescriptor:srcDesc iosurface:srcSurface plane:0];
+
+    MTLTextureDescriptor* dstDesc =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                           width:dstW
+                                                          height:dstH
+                                                       mipmapped:NO];
+    dstDesc.storageMode = MTLStorageModeShared;
+    dstDesc.usage = _spatialScaler.outputTextureUsage | MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
+    id<MTLTexture> dstTex = [_mtlDevice newTextureWithDescriptor:dstDesc iosurface:dstSurface plane:0];
+
+    if (!srcTex || !dstTex) {
+        CVPixelBufferRelease(dstPB);
+        return nullptr;
+    }
+
+    _spatialScaler.colorTexture = srcTex;
+    _spatialScaler.inputContentWidth = srcW;
+    _spatialScaler.inputContentHeight = srcH;
+    _spatialScaler.outputTexture = dstTex;
+
+    id<MTLCommandBuffer> cmdBuf = [_mtlQueue commandBuffer];
+    if (!cmdBuf) {
+        CVPixelBufferRelease(dstPB);
+        return nullptr;
+    }
+    [_spatialScaler encodeToCommandBuffer:cmdBuf];
+    [cmdBuf commit];
+    [cmdBuf waitUntilCompleted];
+    if (cmdBuf.status == MTLCommandBufferStatusError) {
+        gMetalFXActive.store(false, std::memory_order_relaxed);
+        CVPixelBufferRelease(dstPB);
+        return nullptr;
+    }
+    gMetalFXInW.store(static_cast<uint32_t>(srcW), std::memory_order_relaxed);
+    gMetalFXInH.store(static_cast<uint32_t>(srcH), std::memory_order_relaxed);
+    gMetalFXOutW.store(static_cast<uint32_t>(dstW), std::memory_order_relaxed);
+    gMetalFXOutH.store(static_cast<uint32_t>(dstH), std::memory_order_relaxed);
+    gMetalFXActive.store(MetalFXUpscaleEnabled(), std::memory_order_relaxed);
+    return dstPB;
+}
+
 - (void)startStreamForDisplayIndex:(uint32_t)idx {
+
     if (!_fallbackTimer) {
         _fallbackTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _captureQueue);
         dispatch_source_set_timer(_fallbackTimer,
@@ -87,15 +329,22 @@ using namespace NewtCaptureInternal;
                                      (unsigned long)(chosen + 1),
                                      (long)display.width, (long)display.height];
 
+                NSArray<SCWindow*>* excludedWindows = VRViewerWindows(content);
+                self.mirrorExcludedWindows = VRViewerWindowIDs(excludedWindows);
                 SCContentFilter* filter =
-                    [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+                    [[SCContentFilter alloc] initWithDisplay:display excludingWindows:excludedWindows];
                 SCStreamConfiguration* cfg = [[SCStreamConfiguration alloc] init];
-                cfg.width = LiveWidth();
-                cfg.height = LiveHeight();
+                const size_t dispW = std::max<size_t>(1, static_cast<size_t>(display.width));
+                const size_t dispH = std::max<size_t>(1, static_cast<size_t>(display.height));
+                const size_t baseW = std::max<size_t>(static_cast<size_t>(LiveWidth()), std::min<size_t>(dispW, 1920));
+                const size_t streamW = std::max<size_t>(2, baseW & ~size_t(1));
+                const size_t streamH = std::max<size_t>(2, ((streamW * dispH + dispW / 2) / dispW) & ~size_t(1));
+                cfg.width = streamW;
+                cfg.height = streamH;
                 cfg.pixelFormat = kCVPixelFormatType_32BGRA;
                 cfg.showsCursor = YES;
                 cfg.scalesToFit = YES;
-                if (@available(macOS 14.0, *)) cfg.preservesAspectRatio = YES;
+                if (@available(macOS 14.0, *)) cfg.preservesAspectRatio = NO;
                 cfg.minimumFrameInterval = CMTimeMake(1, self.manager ? self.manager->FPS() : 30);
                 cfg.queueDepth = 5;
 
@@ -108,6 +357,13 @@ using namespace NewtCaptureInternal;
                          sampleHandlerQueue:self.captureQueue
                                       error:&addErr]) {
                     self.stream = stream;
+                    if (!self.mirrorFilterTimer) {
+                        self.mirrorFilterTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.captureQueue);
+                        dispatch_source_set_timer(self.mirrorFilterTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 100);
+                        __weak NewtScreenCaptureDelegate* weakSelf = self;
+                        dispatch_source_set_event_handler(self.mirrorFilterTimer, ^{ [weakSelf refreshMirrorFilter]; });
+                        dispatch_resume(self.mirrorFilterTimer);
+                    }
                     [stream startCaptureWithCompletionHandler:^(NSError* startErr) {
                         if (startErr) {
                             Newt_Logf(NEWT_LOG_WARNING, "SCStream startCapture failed (%s), using CoreGraphics display capture.",
@@ -122,7 +378,36 @@ using namespace NewtCaptureInternal;
     }
 }
 
+- (void)refreshMirrorFilter {
+    if (@available(macOS 12.3, *)) {
+        if (!self.manager || !self.stream || self.mirrorFilterPending) return;
+        self.mirrorFilterPending = YES;
+        SCStream* stream = self.stream;
+        uint32_t displayID = self.manager->DisplayID();
+        [SCShareableContent getShareableContentExcludingDesktopWindows:NO onScreenWindowsOnly:YES
+            completionHandler:^(SCShareableContent* content, NSError* error) {
+                dispatch_async(self.captureQueue, ^{
+                    self.mirrorFilterPending = NO;
+                    if (error || !self.manager || self.stream != stream) return;
+                    NSArray<SCWindow*>* windows = VRViewerWindows(content);
+                    NSSet<NSNumber*>* ids = VRViewerWindowIDs(windows);
+                    if ([ids isEqualToSet:self.mirrorExcludedWindows]) return;
+                    SCDisplay* display = nil;
+                    for (SCDisplay* candidate in content.displays) if (candidate.displayID == displayID) { display = candidate; break; }
+                    if (!display) return;
+                    SCContentFilter* filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:windows];
+                    [stream updateContentFilter:filter completionHandler:^(NSError* updateError) {
+                        dispatch_async(self.captureQueue, ^{
+                            if (!updateError && self.stream == stream) self.mirrorExcludedWindows = ids;
+                        });
+                    }];
+                });
+            }];
+    }
+}
+
 - (void)stopStream {
+    if (_mirrorFilterTimer) { dispatch_source_cancel(_mirrorFilterTimer); _mirrorFilterTimer = nil; }
     if (_fallbackTimer) {
         dispatch_source_cancel(_fallbackTimer);
         _fallbackTimer = nil;
@@ -143,11 +428,22 @@ using namespace NewtCaptureInternal;
     if (status && status.integerValue != SCFrameStatusComplete) return;
     CVImageBufferRef pb = CMSampleBufferGetImageBuffer(sampleBuffer);
     if (!pb || !_manager) return;
-    _manager->PublishCVPixelBuffer(pb,
-                                   _displayLabel ? _displayLabel.UTF8String : "Live Desktop");
+    CVPixelBufferRef upscaled = [self createUpscaledPixelBuffer:pb];
+    if (upscaled) {
+        _manager->PublishCVPixelBuffer(upscaled,
+                                       _displayLabel ? _displayLabel.UTF8String : "Live Desktop");
+        CVPixelBufferRelease(upscaled);
+    } else {
+        _manager->PublishCVPixelBuffer(pb,
+                                       _displayLabel ? _displayLabel.UTF8String : "Live Desktop");
+    }
 }
 
 @end
+
+
+
+
 
 ScreenCaptureManager::ScreenCaptureManager() = default;
 
@@ -204,7 +500,7 @@ void ScreenCaptureManager::PublishCVPixelBuffer(void* cvPixelBuffer, const std::
         mLatestFrame.pixels.clear();
         mFrameSeq.fetch_add(1);
     } else {
-        PixelImage img = PixelImageFromCVPixelBuffer(pixels, label);
+        PixelImage img = PixelImageFromCVPixelBuffer(pixels, ScreenCaptureBadgeVisible() ? label : "");
         std::lock_guard<std::mutex> lock(mMutex);
         mLatestBuffer.reset();
         mLatestFrame = std::move(img);
@@ -214,11 +510,13 @@ void ScreenCaptureManager::PublishCVPixelBuffer(void* cvPixelBuffer, const std::
 
 void ScreenCaptureManager::TickFallback() {
     if (!mRunning.load()) return;
+
     const uint64_t now = NowMs();
     const uint64_t lastSc = mLastSCStreamTimeMs.load();
     if (lastSc > 0 && (now - lastSc) < 500) return;
 
     @autoreleasepool {
+
         if (mFrameSeq.load() == 0) {
             NSScreen* mainScreen = [NSScreen mainScreen];
             NSRect frame = mainScreen ? mainScreen.frame : NSMakeRect(0, 0, 1920, 1080);
@@ -232,6 +530,7 @@ void ScreenCaptureManager::TickFallback() {
                                      frame.size.width, frame.size.height];
                 DrawText(resInfo, NSMakeRect(680, 40, 296, 30), 20, YES, cyan, NSTextAlignmentRight);
                 FillRounded(NSMakeRect(64, 110, 896, 380), 16, RGB(0.10f, 0.14f, 0.18f));
+                DrawPippinLogo(NSMakeRect(462, 132, 100, 100));
                 DrawText(@"Connecting to macOS ScreenCaptureKit...",
                          NSMakeRect(100, 260, 824, 40), 28, YES, white, NSTextAlignmentCenter);
                 DrawText(@"If prompted by macOS, allow Screen Recording for Pippin in System Settings > Privacy & Security.",
@@ -257,6 +556,10 @@ bool ScreenCaptureManager::GetLatestFrame(uint64_t& lastSeq, PixelImage& outImag
     lastSeq = cur;
     return true;
 }
+
+
+
+
 
 bool ScreenCaptureManager::GetLatestPixelBuffer(uint64_t& lastSeq, RetainedObject& pixels, std::string& label) {
     std::lock_guard<std::mutex> lock(mMutex);
