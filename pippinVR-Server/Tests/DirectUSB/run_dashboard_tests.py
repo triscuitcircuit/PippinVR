@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline dashboard tests (no headset): custom headset panels, recentering."""
 from pathlib import Path
+import os
 import subprocess
 
 tests = Path(__file__).resolve().parent
@@ -18,6 +19,13 @@ execute(["xcrun", "clang++", "-std=c++17", "-fobjc-arc", "-fsanitize=address,und
 execute([output / "custom-ui"])
 newt = server.parent / "Newt/include"
 openxr = server / "third_party/openxr-sdk/include"
+vulkan_sdk = os.environ.get("VULKAN_SDK")
+vulkan_include = []
+if vulkan_sdk:
+    include = Path(vulkan_sdk) / "include"
+    if not (include / "vulkan/vulkan.h").is_file():
+        raise SystemExit(f"Vulkan headers not found in VULKAN_SDK: {include}")
+    vulkan_include = ["-I" + str(include)]
 execute(["xcrun", "clang++", "-std=c++17", "-fsanitize=address,undefined", "-I" + str(source), "-I" + str(newt),
-         "-I" + str(openxr), tests / "recenter_test.cpp", "-o", output / "recenter"])
+         "-I" + str(openxr), *vulkan_include, tests / "recenter_test.cpp", "-o", output / "recenter"])
 execute([output / "recenter"])
