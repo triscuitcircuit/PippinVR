@@ -1,8 +1,9 @@
 #include "UI.h"
+#include "Newt/Capture.h"
 #include "InteractionGeometry.h"
 #include <algorithm>
 
-PixelImage RenderMenu(int selected, const char* notice, bool buttons) {
+PixelImage RenderMenu(int selected, const char* notice, bool buttons, int leftBattery, int rightBattery) {
     return MakeImage(^(NSRect bounds) {
         FillRounded(bounds, 16, RGB(0.08f, 0.085f, 0.095f));
 
@@ -18,7 +19,11 @@ PixelImage RenderMenu(int selected, const char* notice, bool buttons) {
             DrawText([NSString stringWithUTF8String:kMenuItems[i]], NSMakeRect(x + 2, 100, 84, 23), 14, YES,
                 RGB(0.94f, 0.96f, 0.95f), NSTextAlignmentCenter);
         }
-        DrawText([NSString stringWithUTF8String:notice], NSMakeRect(148, 14, 850, 23), 15, NO, RGB(0.66f, 0.76f, 0.74f));
+        DrawText([NSString stringWithUTF8String:notice], NSMakeRect(148, 14, 490, 23), 15, NO, RGB(0.66f, 0.76f, 0.74f));
+        NSString* left = leftBattery >= 0 ? [NSString stringWithFormat:@"%d%%", leftBattery] : @"—";
+        NSString* right = rightBattery >= 0 ? [NSString stringWithFormat:@"%d%%", rightBattery] : @"—";
+        DrawText([NSString stringWithFormat:@"Quest —   L %@   R %@", left, right],
+                 NSMakeRect(640, 14, 358, 23), 15, YES, RGB(0.66f, 0.76f, 0.74f), NSTextAlignmentRight);
         DrawText(@"Y / B or Menu: reopen dashboard", NSMakeRect(148, 138, 840, 20), 12, NO, RGB(0.66f, 0.70f, 0.72f));
     }, 1024, 160);
 }
@@ -115,7 +120,7 @@ PixelImage RenderContent(Page page, GridColor grid, float volume, const std::vec
                 DrawText(titles[i], NSMakeRect(x + 20, y + 4, 390, 22), 17, NO, muted);
                 DrawText(values[i], NSMakeRect(x + 20, y + 26, 390, 30), 22, YES, white);
             }
-            DrawText(@"Grab the bar to move · both grips to stretch · right stick to resize. Never recorded or saved.",
+            DrawText(@"Grab the bar to move · both grips to stretch · right stick to resize. VR recordings can include this view.",
                      NSMakeRect(70, 536, 884, 26), 19, NO, muted);
             DrawText(@"Trace in room: touch 4 real corners with a controller tip and pull the trigger at each.",
                      NSMakeRect(70, 562, 884, 26), 19, NO, muted);
@@ -147,12 +152,19 @@ PixelImage RenderContent(Page page, GridColor grid, float volume, const std::vec
             DrawText([NSString stringWithFormat:@"#%02X%02X%02X",int(selected[0]*255+0.5f),int(selected[1]*255+0.5f),int(selected[2]*255+0.5f)],NSMakeRect(690,305,220,25),20,YES,white,NSTextAlignmentCenter);
             FillRounded(NSMakeRect(690,330,220,60),10,RGB(0.15f,0.18f,0.20f));
             DrawText(grid.enabled?@"Grid: On":@"Grid: Off",NSMakeRect(700,347,200,30),23,YES,white,NSTextAlignmentCenter);
+            FillRounded(NSMakeRect(690,400,220,50),10,RGB(0.15f,0.18f,0.20f));
+            DrawText(ScreenCaptureBadgeVisible()?@"Screen labels: On":@"Screen labels: Off",NSMakeRect(700,412,200,28),19,YES,white,NSTextAlignmentCenter);
             FillRounded(NSMakeRect(70,470,570,68),10,RGB(0.15f,0.18f,0.20f));
             DrawText([NSString stringWithFormat:@"Media volume: %d%% — select to change",int(volume*100+0.5f)],NSMakeRect(100,488,520,38),23,NO,white);
             NSArray<NSString*>* soundModes=@[@"Sound: Mac",@"Sound: Stereo",@"Sound: HRTF",@"Sound: HRTF HQ"];
             FillRounded(NSMakeRect(690,470,220,68),10,audioMode>=2?RGB(0.12f,0.38f,0.34f):RGB(0.15f,0.18f,0.20f));
             DrawText(soundModes[std::clamp(audioMode,0,3)],NSMakeRect(700,488,200,38),23,YES,white,NSTextAlignmentCenter);
-            DrawText(@"Sound in the headset: Stereo, or HRTF from the screen you're using. The Mac goes quiet meanwhile.",NSMakeRect(70,548,840,30),18,NO,muted);
+            FillRounded(NSMakeRect(70,548,370,36),8,RGB(0.15f,0.18f,0.20f));
+            DrawText(@"Recording view: change",NSMakeRect(80,553,350,26),19,YES,white,NSTextAlignmentCenter);
+            FillRounded(NSMakeRect(460,548,210,36),8,RGB(0.15f,0.18f,0.20f));
+            DrawText(@"Show / hide view",NSMakeRect(466,553,198,26),17,YES,white,NSTextAlignmentCenter);
+            FillRounded(NSMakeRect(690,548,220,36),8,RGB(0.15f,0.18f,0.20f));
+            DrawText(@"Record / Stop",NSMakeRect(700,553,200,26),19,YES,white,NSTextAlignmentCenter);
 
         }
         if (page == Page::Settings) {
@@ -173,7 +185,8 @@ PixelImage RenderPassthroughPlaceholder() {
     return MakeImage(^(NSRect bounds) {
         FillRounded(bounds, 24, RGB(0.055f, 0.07f, 0.085f, 0.98f));
         DrawText(@"Passthrough", NSMakeRect(52, 36, 600, 54), 42, YES, RGB(0.93f, 0.95f, 0.94f));
-        DrawText(@"Starting the headset cameras…", NSMakeRect(70, 260, 884, 44), 30, YES,
+        DrawPippinLogo(NSMakeRect(448, 108, 128, 128));
+        DrawText(@"Waiting for headset cameras…", NSMakeRect(70, 260, 884, 44), 30, YES,
                  RGB(0.48f, 0.88f, 0.78f), NSTextAlignmentCenter);
         DrawText(@"If nothing appears, restart the headset session after allowing camera access on your Mac.",
                  NSMakeRect(70, 330, 884, 60), 22, NO, RGB(0.62f, 0.68f, 0.70f), NSTextAlignmentCenter);
@@ -208,14 +221,21 @@ PixelImage RenderAlertCard(NSString* title, NSString* detail) {
     }, 1024, 220);
 }
 
+void DrawPippinLogo(NSRect rect) {
+    NSString* path = [[NSBundle mainBundle] pathForResource:@"pippin-logo" ofType:@"png"];
+    NSImage* logo = path ? [[NSImage alloc] initWithContentsOfFile:path] : nil;
+    if (!logo) logo = [NSApp applicationIconImage];
+    if (logo) {
+        [logo drawInRect:rect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0
+             respectFlipped:YES hints:nil];
+    } else {
+        DrawText(@"Pippin", rect, std::min(rect.size.width, rect.size.height) * 0.17, YES,
+                 RGB(0.45f,0.85f,0.72f), NSTextAlignmentCenter);
+    }
+}
+
 PixelImage RenderLogo() {
-    return MakeImage(^(NSRect bounds) {
-        NSString* path = [[NSBundle mainBundle] pathForResource:@"pippin-logo" ofType:@"png"];
-        NSImage* logo = path ? [[NSImage alloc] initWithContentsOfFile:path] : nil;
-        if (!logo) logo = [NSApp applicationIconImage];
-        if (logo) [logo drawInRect:bounds];
-        else DrawText(@"Pippin", NSMakeRect(8, 94, 240, 64), 44, YES, RGB(0.45f,0.85f,0.72f), NSTextAlignmentCenter);
-    },256,256);
+    return MakeImage(^(NSRect bounds) { DrawPippinLogo(bounds); }, 256, 256);
 }
 
 PixelImage RenderModelPopup(int hoveredButton, float scale, bool inFront) {

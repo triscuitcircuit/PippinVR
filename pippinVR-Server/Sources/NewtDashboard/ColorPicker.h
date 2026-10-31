@@ -23,8 +23,12 @@ inline int GridControlAt(float x,float y) {
     if(x>=70 && x<=640 && y>=140 && y<=176) return 100;
     if(x>=70 && x<=640 && y>=202 && y<=442) return 102;
     if(x>=690 && x<=910 && y>=330 && y<=390) return 103;
+    if(x>=690 && x<=910 && y>=400 && y<=450) return 111;
     if(x>=70 && x<=640 && y>=470 && y<=538) return 101;
     if(x>=690 && x<=910 && y>=470 && y<=538) return 107;
+    if(x>=690 && x<=910 && y>=548 && y<=584) return 108;
+    if(x>=70 && x<=440 && y>=548 && y<=584) return 109;
+    if(x>=460 && x<=670 && y>=548 && y<=584) return 110;
     return -1;
 }
 constexpr float kSettingsTabX[3] = {340, 550, 760};

@@ -200,9 +200,12 @@ nonisolated(unsafe) var signalSources: [DispatchSourceSignal] = []
     FileHandle.standardError.write(Data("\n[pipeline] shutting down\n".utf8))
     #if PIPPINVR_DIRECT
     if let directSession = activeDirectSession {
-        Task.detached {
+        Task { @MainActor in
+            AddonManager.shared.stopAll()
+            AddonAPIServer.shared.stop()
+            await VRViewWindowController.shared.finishBeforeShutdown()
             await directSession.stopAndWait()
-            DispatchQueue.main.async { exit(exitCode) }
+            exit(exitCode)
         }
         return
     }

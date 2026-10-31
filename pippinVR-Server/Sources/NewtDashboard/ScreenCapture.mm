@@ -1,5 +1,6 @@
 #include "include/NewtLog.h"
 #include "Metrics.h"
+#include "UI.h"
 #include "MetalFXResolution.h"
 #include "Newt/CaptureInternal.h"
 #import <AVFoundation/AVFoundation.h>
@@ -80,6 +81,9 @@ void GetMetalFXDimensions(uint32_t& inputWidth, uint32_t& inputHeight,
 @property (nonatomic, strong) SCStream* stream;
 @property (nonatomic, strong) dispatch_queue_t captureQueue;
 @property (nonatomic, strong) dispatch_source_t fallbackTimer;
+@property (nonatomic, strong) dispatch_source_t mirrorFilterTimer;
+@property (nonatomic, strong) NSSet<NSNumber*>* mirrorExcludedWindows;
+@property (nonatomic, assign) BOOL mirrorFilterPending;
 @property (nonatomic, copy) NSString* displayLabel;
 @property (nonatomic, assign) NSUInteger displayRetries;
 @property (nonatomic, strong) id<MTLDevice> mtlDevice;
@@ -92,7 +96,30 @@ void GetMetalFXDimensions(uint32_t& inputWidth, uint32_t& inputHeight,
 - (instancetype)initWithManager:(ScreenCaptureManager*)mgr;
 - (void)startStreamForDisplayIndex:(uint32_t)idx;
 - (void)stopStream;
+- (void)refreshMirrorFilter;
 @end
+
+static NSArray<SCWindow*>* VRViewerWindows(SCShareableContent* content) API_AVAILABLE(macos(12.3)) {
+    NSUserDefaults* preferences = [[NSUserDefaults alloc] initWithSuiteName:@"com.pippinvr.server"];
+    [preferences synchronize];
+    NSNumber* hide = [preferences objectForKey:@"directVRViewHideFromHeadset"];
+    if (hide && !hide.boolValue) return @[];
+    NSMutableArray<SCWindow*>* windows = [NSMutableArray array];
+    for (SCWindow* window in content.windows) {
+        NSString* title = window.title;
+        if ([window.owningApplication.bundleIdentifier isEqualToString:@"com.pippinvr.server"] &&
+            ([title isEqualToString:@"PippinVR — VR View"] || [title isEqualToString:@"PippinVR — Clean VR View"])) {
+            [windows addObject:window];
+        }
+    }
+    return windows;
+}
+
+static NSSet<NSNumber*>* VRViewerWindowIDs(NSArray<SCWindow*>* windows) API_AVAILABLE(macos(12.3)) {
+    NSMutableSet<NSNumber*>* ids = [NSMutableSet set];
+    for (SCWindow* window in windows) [ids addObject:@(window.windowID)];
+    return ids;
+}
 
 @implementation NewtScreenCaptureDelegate {
     CVPixelBufferPoolRef _upscalePool;
@@ -302,8 +329,10 @@ void GetMetalFXDimensions(uint32_t& inputWidth, uint32_t& inputHeight,
                                      (unsigned long)(chosen + 1),
                                      (long)display.width, (long)display.height];
 
+                NSArray<SCWindow*>* excludedWindows = VRViewerWindows(content);
+                self.mirrorExcludedWindows = VRViewerWindowIDs(excludedWindows);
                 SCContentFilter* filter =
-                    [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+                    [[SCContentFilter alloc] initWithDisplay:display excludingWindows:excludedWindows];
                 SCStreamConfiguration* cfg = [[SCStreamConfiguration alloc] init];
                 const size_t dispW = std::max<size_t>(1, static_cast<size_t>(display.width));
                 const size_t dispH = std::max<size_t>(1, static_cast<size_t>(display.height));
@@ -328,6 +357,13 @@ void GetMetalFXDimensions(uint32_t& inputWidth, uint32_t& inputHeight,
                          sampleHandlerQueue:self.captureQueue
                                       error:&addErr]) {
                     self.stream = stream;
+                    if (!self.mirrorFilterTimer) {
+                        self.mirrorFilterTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.captureQueue);
+                        dispatch_source_set_timer(self.mirrorFilterTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_MSEC * 100);
+                        __weak NewtScreenCaptureDelegate* weakSelf = self;
+                        dispatch_source_set_event_handler(self.mirrorFilterTimer, ^{ [weakSelf refreshMirrorFilter]; });
+                        dispatch_resume(self.mirrorFilterTimer);
+                    }
                     [stream startCaptureWithCompletionHandler:^(NSError* startErr) {
                         if (startErr) {
                             Newt_Logf(NEWT_LOG_WARNING, "SCStream startCapture failed (%s), using CoreGraphics display capture.",
@@ -342,7 +378,36 @@ void GetMetalFXDimensions(uint32_t& inputWidth, uint32_t& inputHeight,
     }
 }
 
+- (void)refreshMirrorFilter {
+    if (@available(macOS 12.3, *)) {
+        if (!self.manager || !self.stream || self.mirrorFilterPending) return;
+        self.mirrorFilterPending = YES;
+        SCStream* stream = self.stream;
+        uint32_t displayID = self.manager->DisplayID();
+        [SCShareableContent getShareableContentExcludingDesktopWindows:NO onScreenWindowsOnly:YES
+            completionHandler:^(SCShareableContent* content, NSError* error) {
+                dispatch_async(self.captureQueue, ^{
+                    self.mirrorFilterPending = NO;
+                    if (error || !self.manager || self.stream != stream) return;
+                    NSArray<SCWindow*>* windows = VRViewerWindows(content);
+                    NSSet<NSNumber*>* ids = VRViewerWindowIDs(windows);
+                    if ([ids isEqualToSet:self.mirrorExcludedWindows]) return;
+                    SCDisplay* display = nil;
+                    for (SCDisplay* candidate in content.displays) if (candidate.displayID == displayID) { display = candidate; break; }
+                    if (!display) return;
+                    SCContentFilter* filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:windows];
+                    [stream updateContentFilter:filter completionHandler:^(NSError* updateError) {
+                        dispatch_async(self.captureQueue, ^{
+                            if (!updateError && self.stream == stream) self.mirrorExcludedWindows = ids;
+                        });
+                    }];
+                });
+            }];
+    }
+}
+
 - (void)stopStream {
+    if (_mirrorFilterTimer) { dispatch_source_cancel(_mirrorFilterTimer); _mirrorFilterTimer = nil; }
     if (_fallbackTimer) {
         dispatch_source_cancel(_fallbackTimer);
         _fallbackTimer = nil;
@@ -435,7 +500,7 @@ void ScreenCaptureManager::PublishCVPixelBuffer(void* cvPixelBuffer, const std::
         mLatestFrame.pixels.clear();
         mFrameSeq.fetch_add(1);
     } else {
-        PixelImage img = PixelImageFromCVPixelBuffer(pixels, label);
+        PixelImage img = PixelImageFromCVPixelBuffer(pixels, ScreenCaptureBadgeVisible() ? label : "");
         std::lock_guard<std::mutex> lock(mMutex);
         mLatestBuffer.reset();
         mLatestFrame = std::move(img);
@@ -465,6 +530,7 @@ void ScreenCaptureManager::TickFallback() {
                                      frame.size.width, frame.size.height];
                 DrawText(resInfo, NSMakeRect(680, 40, 296, 30), 20, YES, cyan, NSTextAlignmentRight);
                 FillRounded(NSMakeRect(64, 110, 896, 380), 16, RGB(0.10f, 0.14f, 0.18f));
+                DrawPippinLogo(NSMakeRect(462, 132, 100, 100));
                 DrawText(@"Connecting to macOS ScreenCaptureKit...",
                          NSMakeRect(100, 260, 824, 40), 28, YES, white, NSTextAlignmentCenter);
                 DrawText(@"If prompted by macOS, allow Screen Recording for Pippin in System Settings > Privacy & Security.",

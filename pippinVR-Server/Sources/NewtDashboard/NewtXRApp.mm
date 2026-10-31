@@ -5,12 +5,18 @@
 #include <fstream>
 #include <csignal>
 #include <cstring>
+#include <dlfcn.h>
 #include "SystemCheck.h"
 #include "Metrics.h"
 #include "HandBenchmark.h"
+#include "AddonAudioBridge.h"
+#include "AddonCameraBridge.h"
+#include "AddonInputBridge.h"
+#include "ScreenLabelPreferences.h"
 using namespace NewtInternal;
 void NewtXR::Run() {
     LoadMetalFXSettings();
+    SetScreenCaptureBadgeVisible(LoadScreenLabelPreference());
     mClockSettings = LoadWristClockSettings();
     mPassthrough = LoadPassthroughSettings();
     if (const char* value = std::getenv("NEWT_WRIST_CLOCK")) mClockSettings.enabled = std::strcmp(value, "0") != 0;
@@ -57,6 +63,9 @@ void NewtXR::Run() {
 }
 void NewtXR::OnReady(Newt::Session&) {
     HandBenchmarkStart(mPassthrough.allowed);
+    StartAddonAudioBridge();
+    StartAddonCameraBridge();
+    StartAddonInputBridge();
     CreateRenderAssets();
     AddPanel(false,0);
     if (mPassthrough.enabled) SetPassthroughShown(true);
@@ -91,6 +100,11 @@ void NewtXR::OnSessionState(XrSessionState state) {
     }
 }
 void NewtXR::OnStopping(Newt::Session&) noexcept {
+    mAddonModelRequests.clear();
+    mAddonModelsLastScan = {};
+    StopAddonInputBridge();
+    StopAddonCameraBridge();
+    StopAddonAudioBridge();
     HandBenchmarkStop();
     SaveSceneIfChanged(true);
     mSceneRestored = false;
@@ -100,6 +114,11 @@ void NewtXR::OnStopping(Newt::Session&) noexcept {
     }
     ReleasePassthroughRuntime();
     ReleaseRecenterRuntime();
+    mControllerBatteryPercent = nullptr;
+    if (mBatteryRuntime) dlclose(mBatteryRuntime);
+    mBatteryRuntime = nullptr;
+    mControllerBattery[0] = mControllerBattery[1] = -1;
+    mBatteryPoll = {};
     ReleaseSystemAudio();
     for (auto& panel : mPanels) {
         if (panel->screen) panel->screen->Stop();
@@ -150,6 +169,11 @@ void NewtXR::OnStopping(Newt::Session&) noexcept {
     mCore->DestroyTexture(mRecenterRingTexture);
     mAlertDrag = {-1, -1};
     mCore->DestroyTexture(mContentTexture);
+    mCore->DestroyBuffer(mFractalCubeEdges);
+    mCore->DestroyBuffer(mFractalCube);
+    mCore->DestroyBuffer(mCutCubeEdges);
+    mCore->DestroyBuffer(mCutCube);
+    mCore->DestroyBuffer(mCubeEdges);
     mCore->DestroyBuffer(mCubeBuffer);
     mCore->DestroyBuffer(mGridBuffer);
     mCore->DestroyBuffer(mRayBuffer);

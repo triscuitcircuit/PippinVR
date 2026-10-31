@@ -2,11 +2,13 @@
 #include "NewtInternal.h"
 #include "include/NewtLog.h"
 #include "InteractionGeometry.h"
+#include "AddonInputBridge.h"
 #include <algorithm>
 using namespace NewtInternal;
 
 
 void NewtXR::OnInput(const Newt::InputState& raw) {
+    SubmitAddonInput(raw);
     Newt::InputState input = raw;
     mHandJoints = input.joints;
     mHandJointsValid = input.jointsValid;
@@ -184,7 +186,9 @@ void NewtXR::HandleInput(const Newt::InputState& input) {
                         break;
                     }
                 }
-                if (stretchModelIdx < 0 && mPanels.empty()) {
+                if (stretchModelIdx < 0 && mPanels.empty() && mActiveModel >= 0 &&
+                    mActiveModel < static_cast<int>(mModels.size()) &&
+                    mModels[mActiveModel]->addonParentPanel.empty()) {
                     stretchModelIdx = mActiveModel;
                 }
             }
@@ -244,8 +248,11 @@ void NewtXR::HandleInput(const Newt::InputState& input) {
             float panelDist = 1000.0f, modelDist = 1000.0f;
             const int zone = (!mPanels.empty() && mAimValid[hand]) ? PanelHit(mAimPoses[hand], pickedPanel, panelDist) : -1;
             const int mZone = (!mModels.empty() && mAimValid[hand]) ? ModelHit(mAimPoses[hand], pickedModel, modelDist) : -1;
+            const bool activeModelGrabbable = mActiveModel >= 0 &&
+                mActiveModel < static_cast<int>(mModels.size()) &&
+                mModels[mActiveModel]->addonParentPanel.empty();
             const bool grabModel = (mZone >= 0 && (pickedPanel < 0 || modelDist < panelDist)) ||
-                                   (pickedPanel < 0 && pickedModel < 0 && !mModels.empty());
+                                   (pickedPanel < 0 && pickedModel < 0 && activeModelGrabbable);
             if (grabModel) {
                 const int targetModel = pickedModel >= 0 ? pickedModel : mActiveModel;
                 mActiveModel = targetModel;

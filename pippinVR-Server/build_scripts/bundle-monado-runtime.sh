@@ -181,6 +181,7 @@ if [ -f "${DEST}/libSDL3.0.dylib" ] && [ ! -e "${DEST}/libSDL3.dylib" ]; then
 fi
 
 EXECUTABLE="${APP_DIR}/Contents/MacOS/pippinvr-server"
+ENTITLEMENTS="${PIPPIN_SERVER_DIR}/Resources/PippinVR.entitlements"
 for lib in libopenxr_loader.dylib libvulkan.1.dylib; do
     if otool -L "${EXECUTABLE}" | grep -q "@loader_path/${lib}"; then
         install_name_tool -change "@loader_path/${lib}" \
@@ -282,11 +283,11 @@ if [ -f "${APP_DIR}/Contents/Resources/newtd" ]; then
     fi
 fi
 if [ "${CODESIGN_IDENTITY}" = "-" ]; then
-    codesign --force --sign - "${EXECUTABLE}" >/dev/null
-    codesign --force --sign - "${APP_DIR}" >/dev/null
+    codesign --force --sign - --entitlements "${ENTITLEMENTS}" "${EXECUTABLE}" >/dev/null
+    codesign --force --sign - --entitlements "${ENTITLEMENTS}" "${APP_DIR}" >/dev/null
 else
-    codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY}" "${EXECUTABLE}" >/dev/null
-    codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY}" "${APP_DIR}" >/dev/null
+    codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS}" "${EXECUTABLE}" >/dev/null
+    codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS}" "${APP_DIR}" >/dev/null
 fi
 codesign --verify --strict "${APP_DIR}"
 

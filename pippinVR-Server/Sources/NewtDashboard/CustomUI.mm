@@ -88,6 +88,8 @@ void NewtXR::ShowCustomPanel(const customui::PanelSpec& spec, CustomPanelHandler
     for (auto& panel : mCustomPanels) {
         if (panel.spec.id != spec.id || panel.removed) continue;
         const bool moved = panel.spec.anchor != spec.anchor || std::memcmp(panel.spec.position, spec.position, sizeof spec.position);
+        if (panel.spec.rotation != spec.rotation || panel.spec.degreesPerSecond != spec.degreesPerSecond)
+            panel.rotationStart = std::chrono::steady_clock::now();
         panel.spec = spec;
         panel.dirty = true;
         panel.hidden = false;
@@ -192,11 +194,11 @@ bool NewtXR::CustomPanelPose(CustomPanel& panel, XrPosef& pose, float& width, fl
     switch (panel.spec.anchor) {
     case customui::Anchor::Head:
         pose = ComposePose(mViewerPose, local);
-        return true;
+        break;
     case customui::Anchor::Dashboard:
         if (!mMenuOpen) return false;
         pose = ComposePose(mDashboardPose, local);
-        return true;
+        break;
     case customui::Anchor::World:
         if (!panel.placed) {
             const Vec3 f = Rotate(mViewerPose.orientation, Vec3{0, 0, -1});
@@ -207,9 +209,19 @@ bool NewtXR::CustomPanelPose(CustomPanel& panel, XrPosef& pose, float& width, fl
             panel.placed = true;
         }
         pose = panel.worldPose;
-        return true;
+        break;
     }
-    return false;
+    const auto& q = panel.spec.orientation;
+    pose.orientation = QuaternionProduct(pose.orientation, {q[0], q[1], q[2], q[3]});
+    const float dx = mViewerPose.position.x - pose.position.x;
+    const float dz = mViewerPose.position.z - pose.position.z;
+    const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - panel.rotationStart).count();
+    float half = 0;
+    if (customui::RotationYaw(panel.spec.rotation, dx, dz, elapsed, panel.spec.degreesPerSecond, half)) {
+        const XrQuaternionf yaw{0, std::sin(half), 0, std::cos(half)};
+        pose.orientation = panel.spec.rotation == customui::RotationMode::FaceUser ? yaw : QuaternionProduct(pose.orientation, yaw);
+    }
+    return true;
 }
 
 void NewtXR::UpdateCustomPanels(Newt::InputState& input) {
@@ -259,5 +271,47 @@ void NewtXR::DrawCustomPanels(const Newt::EyeFrame& eye, bool headPanels) {
             cleared = true;
         }
         mCore->DrawTextured(eye.command, eye.viewProjection, PoseMatrix(pose, {w, h, 1}), panel.texture);
+        for (const auto& modelPtr : mModels) {
+            const auto& model = *modelPtr;
+            if (model.addonParentPanel != panel.spec.id) continue;
+            XrPosef modelPose = pose;
+            const Vec3 offset = Rotate(pose.orientation, {0, h * 0.5f + 0.025f, 0.12f});
+            modelPose.position.x += offset.x; modelPose.position.y += offset.y; modelPose.position.z += offset.z;
+            const double elapsed = std::chrono::duration<double>(mPrepareStart - model.addonRotationStart).count();
+            if (model.addonRotation == customui::RotationMode::Spin) {
+                const float half = float(std::fmod(elapsed * model.addonRotationSpeed, 360.0) * 3.141592653589793 / 360.0);
+                modelPose.orientation = QuaternionProduct(pose.orientation, {0, std::sin(half), 0, std::cos(half)});
+            }
+            const Mat4 transform = PoseMatrix(modelPose, {model.scale, model.scale, model.scale});
+            for (const auto& part : model.parts)
+                mCore->DrawTextured(eye.command, eye.viewProjection, transform, part.texture, &part.mesh, part.vertexCount);
+        }
+        if (panel.spec.decoration != customui::DecorationShape::None) {
+            const float size = panel.spec.cubeSize;
+            const Vec3 offset = Rotate(pose.orientation, {0, h * 0.5f + size * 0.62f + 0.025f, 0.10f});
+            XrPosef cubePose = pose;
+            cubePose.position.x += offset.x; cubePose.position.y += offset.y; cubePose.position.z += offset.z;
+            const double seconds = std::chrono::duration<double>(mPrepareStart - panel.rotationStart).count();
+            const float half = float(std::fmod(seconds * panel.spec.cubeSpeed, 360.0) * 3.141592653589793 / 360.0);
+            const XrQuaternionf yaw{0, std::sin(half), 0, std::cos(half)};
+            const XrQuaternionf tilt{0.1950903f, 0, 0, 0.9807853f};
+            cubePose.orientation = QuaternionProduct(pose.orientation, QuaternionProduct(yaw, tilt));
+            const auto& c = panel.spec.cubeColor;
+            const Buffer* solid = &mCubeBuffer;
+            const Buffer* edges = &mCubeEdges;
+            uint32_t solidCount = mCubeCount, edgeCount = 24;
+            if (panel.spec.decoration == customui::DecorationShape::CutCube) {
+                solid = &mCutCube; edges = &mCutCubeEdges;
+                solidCount = mCutCubeCount; edgeCount = mCutCubeEdgeCount;
+            } else if (panel.spec.decoration == customui::DecorationShape::Fractal) {
+                solid = &mFractalCube; edges = &mFractalCubeEdges;
+                solidCount = mFractalCubeCount; edgeCount = mFractalCubeEdgeCount;
+            }
+            mCore->DrawColor(eye.command, eye.viewProjection, PoseMatrix(cubePose, {size, size, size}),
+                             *solid, solidCount, {c[0] * .45f, c[1] * .45f, c[2] * .45f, 1}, false);
+            const float outline = size * 1.015f;
+            mCore->DrawColor(eye.command, eye.viewProjection, PoseMatrix(cubePose, {outline, outline, outline}),
+                             *edges, edgeCount, {c[0], c[1], c[2], 1}, true);
+        }
     }
 }

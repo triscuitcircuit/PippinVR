@@ -79,6 +79,49 @@ bool ParsePanelSpec(NSDictionary* json, const std::string& panelId, PanelSpec& o
         return false;
     }
     for (float& p : spec.position) p = std::clamp(p, -5.0f, 5.0f);
+    if (json[@"orientation"]) {
+        if (!Floats(json[@"orientation"], spec.orientation, 4)) { error = "orientation must be a unit quaternion [x,y,z,w]"; return false; }
+        float norm = 0;
+        for (float v : spec.orientation) norm += v * v;
+        if (!std::isfinite(norm) || std::abs(norm - 1.0f) > 0.001f) { error = "orientation must be a unit quaternion"; return false; }
+    }
+    id rotation = json[@"rotation"];
+    if (rotation) {
+        if (![rotation isKindOfClass:[NSDictionary class]] || ![rotation[@"mode"] isKindOfClass:[NSString class]]) { error = "rotation requires a mode"; return false; }
+        NSString* mode = rotation[@"mode"];
+        if ([mode isEqual:@"fixed"]) spec.rotation = RotationMode::Fixed;
+        else if ([mode isEqual:@"spin"]) spec.rotation = RotationMode::Spin;
+        else if ([mode isEqual:@"faceUser"]) spec.rotation = RotationMode::FaceUser;
+        else { error = "rotation mode must be fixed, spin or faceUser"; return false; }
+        id speed = rotation[@"degreesPerSecond"];
+        if (speed) {
+            if (![speed isKindOfClass:[NSNumber class]] || !std::isfinite([speed doubleValue]) || std::abs([speed doubleValue]) > 180) { error = "rotation speed must be between -180 and 180 degrees per second"; return false; }
+            spec.degreesPerSecond = [speed floatValue];
+        }
+    }
+    id decoration = json[@"decoration"];
+    if (decoration) {
+        if (![decoration isKindOfClass:[NSDictionary class]] || ![decoration[@"shape"] isKindOfClass:[NSString class]]) { error = "decoration needs a shape"; return false; }
+        NSString* shape = decoration[@"shape"];
+        if ([shape isEqual:@"cube"]) spec.decoration = DecorationShape::Cube;
+        else if ([shape isEqual:@"cutCube"]) spec.decoration = DecorationShape::CutCube;
+        else if ([shape isEqual:@"fractal"]) spec.decoration = DecorationShape::Fractal;
+        else { error = "unknown decoration shape"; return false; }
+        id size = decoration[@"size"];
+        if (size) {
+            if (![size isKindOfClass:[NSNumber class]] || !std::isfinite([size doubleValue]) || [size doubleValue] < 0.04 || [size doubleValue] > 0.3) { error = "cube size must be between 0.04 and 0.3 meters"; return false; }
+            spec.cubeSize = [size floatValue];
+        }
+        id color = decoration[@"color"];
+        if (color) {
+            if (!Floats(color, spec.cubeColor, 3) || std::any_of(std::begin(spec.cubeColor), std::end(spec.cubeColor), [](float v) { return v < 0 || v > 1; })) { error = "cube color must be [r,g,b] between 0 and 1"; return false; }
+        }
+        id speed = decoration[@"degreesPerSecond"];
+        if (speed) {
+            if (![speed isKindOfClass:[NSNumber class]] || !std::isfinite([speed doubleValue]) || std::abs([speed doubleValue]) > 180) { error = "cube speed must be between -180 and 180 degrees per second"; return false; }
+            spec.cubeSpeed = [speed floatValue];
+        }
+    }
     id closable = json[@"closable"];
     if (closable && ![closable isKindOfClass:[NSNumber class]]) { error = "\"closable\" must be true or false"; return false; }
     if (closable) spec.closable = [closable boolValue];

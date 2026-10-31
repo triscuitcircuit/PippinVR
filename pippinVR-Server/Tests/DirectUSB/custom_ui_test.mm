@@ -38,6 +38,11 @@ int main() {
         assert(int(capped.lines.size()) == kMaxLines && int(capped.buttons.size()) == kMaxButtons && capped.height <= kMaxCardHeight);
 
 
+        float half = 0;
+        assert(RotationYaw(RotationMode::Spin, 0, 0, 2, 45, half) && std::abs(half - 0.785398f) < 0.0001f);
+        assert(RotationYaw(RotationMode::FaceUser, 1, 0, 0, 0, half) && std::abs(half - 0.785398f) < 0.0001f);
+        assert(!RotationYaw(RotationMode::FaceUser, 0, 0, 0, 0, half));
+        assert(!RotationYaw(RotationMode::Fixed, 1, 1, 1, 1, half));
         std::string error;
         assert(Parse(@"{\"title\":\"Build\",\"lines\":[\"ok\"],\"buttons\":[\"Retry\",{\"id\":\"stop\",\"label\":\"Stop\"}],"
                      "\"anchor\":\"head\",\"width\":0.4,\"position\":[0.1,0.2,-0.8],\"closable\":false,\"accent\":[1,0.5,0]}",
@@ -47,6 +52,16 @@ int main() {
         assert(spec.anchor == Anchor::Head && spec.width == 0.4f && spec.position[2] == -0.8f && !spec.closable);
         assert(Parse(@"{\"lines\":\"single line\"}", spec, error) && spec.lines.size() == 1 && spec.anchor == Anchor::World);
         assert(Parse(@"{\"width\":50,\"position\":[0,0,-99]}", spec, error) && spec.width == 2.0f && spec.position[2] == -5.0f);
+        assert(Parse(@"{\"orientation\":[0,0,0,1],\"rotation\":{\"mode\":\"spin\",\"degreesPerSecond\":-45}}", spec, error));
+        assert(spec.orientation[3] == 1 && spec.rotation == RotationMode::Spin && spec.degreesPerSecond == -45);
+        assert(Parse(@"{\"rotation\":{\"mode\":\"faceUser\"}}", spec, error) && spec.rotation == RotationMode::FaceUser);
+        assert(Parse(@"{\"decoration\":{\"shape\":\"fractal\",\"size\":0.15,\"color\":[0.2,0.8,0.6],\"degreesPerSecond\":25}}", spec, error));
+        assert(spec.decoration == DecorationShape::Fractal && std::abs(spec.cubeSize - 0.15f) < 0.0001f);
+        assert(Parse(@"{\"decoration\":{\"shape\":\"cutCube\"}}", spec, error) && spec.decoration == DecorationShape::CutCube);
+        assert(!Parse(@"{\"decoration\":{\"shape\":\"fractal\",\"size\":5}}", spec, error));
+        assert(!Parse(@"{\"decoration\":{\"shape\":\"nope\"}}", spec, error));
+        assert(!Parse(@"{\"orientation\":[0,0,0,0]}", spec, error));
+        assert(!Parse(@"{\"rotation\":{\"mode\":\"spin\",\"degreesPerSecond\":181}}", spec, error));
         assert(!Parse(@"{\"anchor\":\"wall\"}", spec, error) && error.find("anchor") != std::string::npos);
         assert(!Parse(@"{\"buttons\":[3]}", spec, error));
         assert(!Parse(@"{\"position\":[1,2]}", spec, error));

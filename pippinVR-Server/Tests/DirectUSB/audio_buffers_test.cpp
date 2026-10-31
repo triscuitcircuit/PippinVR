@@ -22,6 +22,12 @@ int main() {
                                     std::numeric_limits<size_t>::max(), 2, a, b));
     assert(systemaudio::CopyStereo(left, sizeof(left), left, sizeof(left), 3, 1, a, b) && a == b);
 
+    float mix[] = {0.5f, -0.5f, 0.9f, -0.9f};
+    const float other[] = {0.1f, -0.1f, 0.8f, -0.8f};
+    QlMixStereo(mix, other, 2);
+    assert(mix[0] > 0.59f && mix[0] < 0.61f && mix[1] < -0.59f && mix[1] > -0.61f);
+    assert(mix[2] == 1.0f && mix[3] == -1.0f);
+
     QlAudioBuffer<17> ring;
     std::deque<float> expected;
     std::mt19937 random(42);

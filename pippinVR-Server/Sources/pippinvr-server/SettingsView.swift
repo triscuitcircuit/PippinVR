@@ -3,37 +3,41 @@ import Combine
 import SwiftUI
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, screens, quality, apps, cameras, device, appearance, transport, environment, performance
+    case general, connection, controls, screens, quality, apps, cameras, appearance, transport, environment, performance, support
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general: return "General"
+        case .connection: return "Connection"
+        case .controls: return "Controls"
         case .screens: return "Screens"
         case .quality: return "Quality"
-        case .apps: return "Apps"
+        case .apps: return "Apps & Add-ons"
         case .cameras: return "Cameras"
-        case .device: return "Device"
         case .appearance: return "Appearance"
         case .transport: return "Transport"
         case .environment: return "Environment"
         case .performance: return "Performance"
+        case .support: return "Help & Support"
         }
     }
 
     var icon: String {
         switch self {
         case .general: return "gearshape"
+        case .connection: return "cable.connector"
+        case .controls: return "gamecontroller"
         case .screens: return "display.2"
         case .quality: return "slider.horizontal.3"
         case .apps: return "cube"
         case .cameras: return "camera"
-        case .device: return "visionpro"
         case .appearance: return "paintpalette"
         case .transport: return "cable.connector"
         case .environment: return "globe"
         case .performance: return "gauge"
+        case .support: return "questionmark.circle"
         }
     }
 }
@@ -53,6 +57,13 @@ struct SettingsView: View {
     @State private var tick = false
 
     @State private var selection: SettingsSection = .general
+    @State private var supportTab = 0
+    @State private var appsTab = 0
+    @State private var addonError: String?
+    @State private var addonToRemove: InstalledAddon?
+    @State private var startingAddons: Set<String> = []
+    @StateObject private var addonManager = AddonManager.shared
+    @StateObject private var addonAPI = AddonAPIServer.shared
     @State private var editMode = false
     @State private var editedDisplays: [DisplayEntry] = []
     @State private var showError: String?
@@ -95,15 +106,23 @@ struct SettingsView: View {
 
                         switch selection {
                         case .general: generalPanel
+                        case .connection:
+                            if let directController {
+                                DirectConnectionPanel(controller: directController, metrics: directController.metricsStore)
+                            } else {
+                                inactiveModeNote("Direct USB", "shows connection and camera recovery reports")
+                            }
+                        case .controls:
+                            if directController != nil { DirectControlsPanel() } else { inactiveModeNote("Direct USB", "uses these Quest controller controls") }
                         case .screens: screensPanel
                         case .quality: qualityPanel
                         case .apps: appsPanel
                         case .cameras: camerasPanel
-                        case .device: devicePanel
                         case .appearance: appearancePanel
                         case .transport: transportPanel
                         case .environment: environmentPanel
                         case .performance: performancePanel
+                        case .support: supportPanel
                         }
                     }
                     .padding(.horizontal, 30)
@@ -125,6 +144,16 @@ struct SettingsView: View {
             deviceInfo = USBLinkSpeed.connectedDevices()
             tick.toggle()
         }
+        .alert("Add-on error", isPresented: Binding(get: { addonError != nil }, set: { if !$0 { addonError = nil } })) {
+            Button("OK") { addonError = nil }
+        } message: { Text(addonError ?? "") }
+        .alert("Remove add-on?", isPresented: Binding(get: { addonToRemove != nil }, set: { if !$0 { addonToRemove = nil } })) {
+            Button("Cancel", role: .cancel) { addonToRemove = nil }
+            Button("Remove", role: .destructive) {
+                if let addonToRemove { do { try addonManager.remove(id: addonToRemove.id) } catch { addonError = error.localizedDescription } }
+                addonToRemove = nil
+            }
+        } message: { Text("Remove \(addonToRemove?.manifest.name ?? "this add-on") and its installed files?") }
         .alert("Direct USB needs Newt", isPresented: $showDirectUSBPrompt) {
             Button("Cancel", role: .cancel) {}
             Button("Switch to Direct USB") { switchToDirectUSB() }
@@ -233,14 +262,14 @@ struct SettingsView: View {
                     .font(.caption).foregroundColor(.secondary)
 
                 SettingsGroup {
-                    SettingRow("Headset sound", help: "Your Mac's sound in the headset. HRTF places it at the screen you're using, so it stays there as you turn your head.") {
+                    SettingRow("Headset sound", help: "Play Mac audio in the headset. HRTF positions sound at the active screen.") {
                         Picker("Headset sound", selection: Binding(
                             get: { directController.audioMode },
                             set: { directController.setAudioMode($0) })) {
                             ForEach(DirectAudioPreferences.Mode.allCases) { Text($0.title).tag($0) }
                         }.labelsHidden().fixedSize()
                     }
-                    SettingRow("Also play on Mac", help: "Off: the Mac's speakers go quiet while the headset has the sound.", showsDivider: false) {
+                    SettingRow("Also play on Mac", help: "Keep Mac speakers on while using headset audio.", showsDivider: false) {
                         Toggle("Also play on Mac", isOn: Binding(
                             get: { directController.audioMacSpeakers },
                             set: { directController.setAudioMacSpeakers($0) })).labelsHidden()
@@ -256,7 +285,7 @@ struct SettingsView: View {
 
                 SettingsGroup {
                     SettingRow("Headset camera access",
-                               help: "Off by default. Lets PippinVR show your headset's passthrough cameras in VR.") {
+                               help: "Allow headset camera access for passthrough.") {
                         Toggle("Headset camera access", isOn: Binding(
                             get: { directController.passthroughAllowed },
                             set: { directController.setPassthroughAllowed($0) })).labelsHidden()
@@ -269,8 +298,8 @@ struct SettingsView: View {
                     }
                 }
                 Text(ProcessInfo.processInfo.environment["PIPPIN_HAND_BENCHMARK"] == "1"
-                     ? "During the hand benchmark, headset camera video also appears in the Mac preview window. Nothing is recorded or saved. Changes to camera access apply from the next headset session."
-                     : "The portal is a movable window showing your room, also switchable in the headset under Settings › Passthrough. Grab its bar to move it; squeeze both grips to stretch it. Camera video is shown only in your headset and never recorded or saved. Changes to camera access apply from the next headset session.")
+                     ? "During the hand benchmark, headset camera video also appears in the Mac preview window. The VR view and recordings can include visible camera content. Changes to camera access apply from the next headset session."
+                     : "The portal is a movable window showing your room, also switchable in the headset under Settings › Passthrough. Grab its bar to move it; squeeze both grips to stretch it. The VR view and recordings can include visible camera content. Changes to camera access apply from the next headset session.")
                     .font(.caption).foregroundColor(.secondary)
             }
 
@@ -313,7 +342,7 @@ struct SettingsView: View {
             } else if let directController {
                 SettingsGroup {
                     SettingRow("Switch to Quest Client (APK)",
-                        help: "Use the sideloaded Pippin APK over adb reverse/forward instead of Direct USB.",
+                        help: "Use the sideloaded Pippin app with ADB.",
                         showsDivider: false) {
                         Button("Switch…") { directController.switchToQuestClient(); tick.toggle() }
                     }
@@ -322,7 +351,7 @@ struct SettingsView: View {
 
             SettingsGroup {
                 SettingRow("Start PippinVR in",
-                    help: "When opened from the Dock or Finder. Direct USB connects to the headset right away.",
+                    help: "Choose the connection mode used at startup.",
                     showsDivider: false) {
                     Picker("", selection: $startupMode) {
                         ForEach(StartupMode.allCases) { mode in Text(mode.title).tag(mode) }
@@ -353,6 +382,13 @@ struct SettingsView: View {
     @ViewBuilder
     private var performancePanel: some View {
         if let directController {
+            #if PIPPINVR_DIRECT
+            SettingsGroup {
+                SettingRow("VR View", help: "Preview or record the headset view on your Mac.", showsDivider: false) {
+                    Button("Open VR View") { VRViewWindowController.shared.show() }
+                }
+            }
+            #endif
             DirectPerformancePanel(controller: directController, metrics: directController.metricsStore)
         } else {
             inactiveModeNote("Direct USB", "shows live Quest Link encode, Newt frame, decode, and MetalFX metrics")
@@ -494,6 +530,13 @@ struct SettingsView: View {
     private func directScreens(_ controller: DirectStatusItemController) -> some View {
         Text("Screens and feeds")
         .font(.system(size: 13, weight: .semibold))
+        SettingsGroup {
+            SettingRow("Screen labels", help: "Show display names and capture information in the headset.", showsDivider: false) {
+                Toggle("Screen labels", isOn: Binding(
+                    get: { controller.showScreenLabels },
+                    set: { controller.setShowScreenLabels($0); tick.toggle() })).labelsHidden()
+            }
+        }
         HStack {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Add another screen").font(.headline)
@@ -525,6 +568,9 @@ struct SettingsView: View {
         Text("3D view")
         .font(.system(size: 13, weight: .semibold))
         directControl(controller, "Selected Screen 3D")
+        directControl(controller, "Stereo eye alignment")
+        Text("For PippinVR SBS recordings, try full-width side-by-side and adjust eye alignment if needed.")
+            .font(.caption).foregroundColor(.secondary)
 
         Text("Arrange panels")
         .font(.system(size: 13, weight: .semibold))
@@ -598,11 +644,123 @@ struct SettingsView: View {
 
     private var appsPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
+            Picker("Apps & Add-ons", selection: $appsTab) {
+                Text("3D Apps").tag(0)
+                Text("Add-ons").tag(1)
+            }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 360)
+            if appsTab == 0 { appsList } else { addonsPanel }
+        }
+    }
+
+    private var addonsPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SettingsGroup {
+                SettingRow("Local integration API", help: "Allow local apps to connect. Access ends when PippinVR closes.") {
+                    Toggle("Local integration API", isOn: Binding(
+                        get: { addonAPI.running || addonAPI.starting },
+                        set: { enabled in
+                            if enabled, let controller = directController { controller.startAddonAPI() } else { addonManager.stopAll(); addonAPI.stop() }
+                        }
+                    )).labelsHidden().disabled(directController == nil)
+                }
+                SettingRow("API camera access", help: "Allow local API clients to read camera frames while the passthrough portal is open.", showsDivider: false) {
+                    Toggle("API camera access", isOn: Binding(
+                        get: { addonAPI.cameraAccess },
+                        set: { addonAPI.setCameraAccess($0) }
+                    )).labelsHidden().disabled(!addonAPI.running || directController?.passthroughAllowed != true)
+                }
+            }
+            if let error = addonAPI.error { Text(error).font(.caption).foregroundColor(.red).textSelection(.enabled) }
+            if addonAPI.starting { Text("Starting local API…").font(.caption).foregroundColor(.secondary) }
+            if addonAPI.running {
+                Text("API available locally · connection details are in the PippinVR application support folder.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            Text("Installed add-ons").font(.headline)
+            Text("Panel add-ons can be enabled here. Executable add-ons run as your macOS user; install add-ons you trust.")
+                .font(.caption).foregroundColor(.secondary)
+            if directController != nil && directController?.running != true {
+                Text("Connect in Direct USB to run executable add-ons.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            if addonManager.addons.isEmpty {
+                Text("No add-ons installed.").foregroundStyle(.secondary)
+            } else {
+                ForEach(addonManager.addons) { addon in
+                    SettingsGroup {
+                        SettingRow(addon.manifest.name, help: "\(addon.manifest.description) · v\(addon.manifest.version)", showsDivider: false) {
+                            if addon.manifest.entrypoint != nil {
+                                let running = addonManager.runningIDs.contains(addon.id)
+                                if running {
+                                    Button(addonManager.stoppingIDs.contains(addon.id) ? "Stopping…" : "Stop") { addonManager.stop(id: addon.id) }
+                                        .disabled(addonManager.stoppingIDs.contains(addon.id))
+                                } else {
+                                    Button(startingAddons.contains(addon.id) ? "Starting…" : "Run") { runAddon(addon) }
+                                        .disabled(startingAddons.contains(addon.id) || directController?.running != true)
+                                }
+                            } else {
+                                Toggle("Enable \(addon.manifest.name)", isOn: Binding(
+                                    get: { addon.enabled },
+                                    set: { value in do { try addonManager.setEnabled(value, id: addon.id) } catch { addonError = error.localizedDescription } }
+                                )).labelsHidden()
+                            }
+                            Button("Remove…") { addonToRemove = addon }
+                                .disabled(addonManager.runningIDs.contains(addon.id) || startingAddons.contains(addon.id))
+                        }
+                    }
+                    if addon.manifest.entrypoint != nil {
+                        Toggle("Start automatically when Direct USB connects", isOn: Binding(
+                            get: { addon.autoStart == true },
+                            set: { value in do { try addonManager.setAutoStart(value, id: addon.id) } catch { addonError = error.localizedDescription } }
+                        )).font(.caption)
+                    }
+                    if let error = addonManager.processErrors[addon.id] {
+                        Text(error).font(.caption).foregroundColor(.red)
+                    }
+                }
+            }
+            HStack {
+                Button {
+                    do { try addonManager.chooseManifest() } catch { addonError = error.localizedDescription }
+                } label: { Label("Install Add-on…", systemImage: "plus.circle") }
+                if let example = Bundle.main.url(forResource: "hello-pippin-addon", withExtension: "json") {
+                    Button("Install Example") {
+                        do { try addonManager.install(from: example) } catch { addonError = error.localizedDescription }
+                    }.disabled(addonManager.addons.contains { $0.id == "hello-pippin" })
+                }
+            }
+            Text("The local API supports panels, images, controller input, audio, and optional headset camera frames.")
+                .font(.caption).foregroundColor(.secondary)
+        }
+    }
+
+    private func runAddon(_ addon: InstalledAddon) {
+        guard let controller = directController, controller.running else {
+            addonError = "Connect your headset in Direct USB mode first."
+            return
+        }
+        startingAddons.insert(addon.id)
+        if !addonAPI.running && !addonAPI.starting {
+            controller.startAddonAPI()
+        }
+        Task { @MainActor in
+            defer { startingAddons.remove(addon.id) }
+            for _ in 0..<100 where addonAPI.starting { try? await Task.sleep(for: .milliseconds(50)) }
+            guard addonAPI.running else {
+                addonError = addonAPI.error ?? "Could not start the local integration API."
+                return
+            }
+            do { try addonManager.run(id: addon.id) } catch { addonError = error.localizedDescription }
+        }
+    }
+
+    private var appsList: some View {
+        VStack(alignment: .leading, spacing: 16) {
             if let directController {
                 Text("3D apps on the headset's Apps page")
                 .font(.system(size: 13, weight: .semibold))
                 if directController.apps.isEmpty {
-                    Text("No apps configured yet. Add a native OpenXR app (.app or executable) or a Godot project folder below")
+                    Text("Add an OpenXR app or a Godot project to get started.")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(Array(directController.apps.enumerated()), id: \.offset) { index, entry in
@@ -617,7 +775,7 @@ struct SettingsView: View {
                 } label: {
                     Label("Add App…", systemImage: "plus.circle")
                 }
-                Text("The app list is sent to the session manager the next time Pippin connects — reconnect to apply a change made here mid-session.")
+                Text("Reconnect to update the headset app list.")
                     .foregroundStyle(.secondary)
             } else {
                 inactiveModeNote("Direct USB", "lets you add native OpenXR apps and Godot projects here so they appear directly on the in-headset Apps page.")
@@ -676,6 +834,24 @@ struct SettingsView: View {
                 }
                 .disabled(true)
                 .opacity(0.5)
+            }
+        }
+    }
+
+    private var supportPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Picker("Help & Support", selection: $supportTab) {
+                Text("Support").tag(0)
+                Text("Device Information").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 360)
+
+            if supportTab == 0 {
+                SupportPanel(directController: directController, onShowConnection: { selection = .connection })
+            } else {
+                devicePanel
             }
         }
     }
@@ -1056,6 +1232,196 @@ private struct DirectMetricsLineGraph: View {
     }
 }
 
+private struct SupportPanel: View {
+    var directController: DirectStatusItemController?
+    var onShowConnection: () -> Void
+    @State private var copied = false
+    private let reportURL = URL(string: "https://github.com/triscuitcircuit/PippinVR/issues/new?template=bug_report.md")!
+    private let issuesURL = URL(string: "https://github.com/triscuitcircuit/PippinVR/issues")!
+    private let sourceURL = URL(string: "https://github.com/triscuitcircuit/PippinVR")!
+    private let licenseURL = URL(string: "https://github.com/triscuitcircuit/PippinVR/blob/main/LICENSE")!
+
+    private var diagnosticSummary: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "Unknown"
+        let build = info?["CFBundleVersion"] as? String ?? "Unknown"
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let mode = directController == nil ? "Quest Client (APK)" : "Direct USB"
+        return """
+        PippinVR: \(version) (build \(build))
+        macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)
+        Connection mode: \(mode)
+        Quest model: [fill in]
+        Quest software version: [fill in, if known]
+        """
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Report a problem").font(.headline)
+            Text("Search existing issues first, then describe what happened, what you expected, and how to reproduce it.")
+                .font(.callout).foregroundColor(.secondary)
+            SettingsGroup {
+                if directController != nil {
+                    SettingRow("Connection problems", help: "Check live USB and session status.") {
+                        Button("View Connection", action: onShowConnection)
+                    }
+                }
+                SettingRow("Find existing reports", showsDivider: true) {
+                    Link("Search issues", destination: issuesURL)
+                }
+                SettingRow("System details", help: "Copy app, macOS, and connection details for your report.") {
+                    Button(copied ? "Copied" : "Copy details") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(diagnosticSummary, forType: .string)
+                        copied = true
+                    }
+                }
+                SettingRow("Open a bug report", help: "GitHub issues are public and require a GitHub account.", showsDivider: false) {
+                    Link("Report a problem", destination: reportURL)
+                }
+            }
+            Text("Review anything you share. Logs and screenshots can contain personal information, file paths, screen contents, or camera images. Nothing is sent automatically.")
+                .font(.caption).foregroundColor(.secondary)
+            Text("Open source").font(.headline).padding(.top, 4)
+            SettingsGroup {
+                SettingRow("PippinVR is licensed under GPLv3", help: "Use, study, modify, and share under the GPLv3. Dependencies have separate licenses.") {
+                    Link("View license", destination: licenseURL)
+                }
+                SettingRow("Source code", showsDivider: false) {
+                    Link("View on GitHub", destination: sourceURL)
+                }
+            }
+        }
+    }
+}
+
+private struct DirectConnectionPanel: View {
+    @ObservedObject var controller: DirectStatusItemController
+    @ObservedObject var metrics: DirectMetricsStore
+
+    private func cameraReport(now: Date) -> String {
+        guard controller.running else { return "Start a Direct USB session to receive reports." }
+        let reports = metrics.cameraReports.values.filter { now.timeIntervalSince($0.date) >= 0 && now.timeIntervalSince($0.date) < 30 }
+        if let stalled = reports.filter(\.waiting).max(by: { $0.date < $1.date }) {
+            return "Recently waiting for a camera keyframe; \(stalled.skipped) frames skipped when reported."
+        }
+        if let recovered = reports.max(by: { $0.date < $1.date }), let wait = recovered.waitMs {
+            return String(format: "Recently recovered after %.1f seconds; %llu frames skipped on one stream.", wait / 1000, recovered.skipped)
+        }
+        return "No recent recovery report. This does not confirm that the camera is live."
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            let encode = metrics.encodeSamples.last
+            let newt = metrics.newtSamples.last
+            let encodeFresh = controller.running && encode.map { timeline.date.timeIntervalSince($0.date) < 5 } == true
+            let newtFresh = controller.running && newt.map { timeline.date.timeIntervalSince($0.date) < 5 } == true
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Direct USB status").font(.headline)
+                SettingsGroup {
+                    SettingRow("Quest USB", help: controller.usbLinkSpeed == nil ? "Connect the headset and check its cable." : "A Meta USB device is detected.") {
+                        Text(controller.usbLinkSpeed == nil ? "Not detected" : "Detected").foregroundColor(.secondary)
+                    }
+                    SettingRow("Session", help: "A running session does not guarantee the headset is displaying video.") {
+                        Text(controller.externalSession ? "In use by another app" : controller.activeApplication != nil ? "3D app running" : controller.running ? "Running" : "Stopped")
+                            .foregroundColor(.secondary)
+                    }
+                    SettingRow("Headset audio", help: controller.audioStatus ?? "No current audio report.") {
+                        Text(controller.audioMode.title).foregroundColor(.secondary)
+                    }
+                    SettingRow("Camera recovery", help: cameraReport(now: timeline.date), showsDivider: false) {
+                        Image(systemName: "camera").foregroundColor(.secondary)
+                    }
+                }
+                Text("Camera reports are available when the active runtime sends recovery logs to PippinVR. A missing report does not rule out a freeze.")
+                    .font(.caption).foregroundColor(.secondary)
+                SettingsGroup {
+                    SettingRow("Video pipeline", help: "Recent measurements; see Performance for graphs.") {
+                        Text(encodeFresh ? String(format: "%.1f ms encode · %.1f ms USB", encode!.stageMs, encode!.txMs) : "No fresh data")
+                            .monospacedDigit().foregroundColor(.secondary)
+                    }
+                    SettingRow("Dashboard frame rate", help: "Application frame rate, not headset presentation.", showsDivider: false) {
+                        Text(newtFresh ? String(format: "%.0f FPS", newt!.fps) : "No fresh data").monospacedDigit().foregroundColor(.secondary)
+                    }
+                }
+                if let error = controller.recoveryError ?? controller.connectionError {
+                    Text(error).font(.caption).foregroundColor(.red).textSelection(.enabled)
+                }
+                HStack {
+                    Button(controller.recoveringConnection ? "Reconnecting…" : controller.running ? "Reconnect" : "Connect") {
+                        controller.recoverConnection()
+                    }.disabled(controller.recoveringConnection || controller.usbLinkSpeed == nil || controller.externalSession || controller.activeApplication != nil)
+                    Text("Reconnect restarts the Direct USB session.").font(.caption).foregroundColor(.secondary)
+                }
+            }
+        }.onAppear { metrics.start() }
+    }
+}
+
+private struct DirectControlsPanel: View {
+    private func button(_ label: String, _ action: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(label).font(.system(size: 11, weight: .bold)).frame(width: 72, alignment: .leading)
+                .padding(6).background(Color.accentColor.opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 5))
+            Text(action).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func controllerCard(left: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(left ? "LEFT CONTROLLER" : "RIGHT CONTROLLER").font(.caption.bold()).foregroundColor(.secondary)
+            HStack(spacing: 18) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 42).fill(Color.accentColor.opacity(0.12)).frame(width: 92, height: 145)
+                    VStack(spacing: 8) {
+                        HStack(spacing: 5) {
+                            Circle().fill(Color.accentColor.opacity(0.7)).frame(width: 30, height: 30).overlay(Text("↕↔").font(.caption.bold()).foregroundColor(.white))
+                            VStack(spacing: 4) {
+                                Text(left ? "Y" : "B")
+                                Text(left ? "X" : "A")
+                            }.font(.caption.bold())
+                        }
+                        Text("TRIGGER").font(.system(size: 9, weight: .bold))
+                        Text("GRIP").font(.system(size: 9, weight: .bold))
+                    }
+                }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 9) {
+                    button(left ? "X" : "A", "Select")
+                    button(left ? "Y / Menu" : "B", "Open or close the dashboard")
+                    button("Trigger", "Point and select")
+                    button("Grip", "Grab and move a screen or model")
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Quest controllers · Direct USB").font(.headline)
+            Text("Use the pointing ray to choose an item. Controls can vary in other VR apps.").font(.caption).foregroundColor(.secondary)
+            SettingsGroup {
+                VStack(spacing: 0) {
+                    controllerCard(left: true)
+                    Divider()
+                    controllerCard(left: false)
+                }
+            }
+            SettingsGroup {
+                SettingRow("Either stick", help: "Move through dashboard items; press the stick to select.") { EmptyView() }
+                SettingRow("Left stick", help: "Move the active screen while the dashboard is closed.") { EmptyView() }
+                SettingRow("Right stick", help: "Resize or move the active screen closer or farther away.") { EmptyView() }
+                SettingRow("Both grips", help: "Hold both grips to stretch a screen or scale a model.") { EmptyView() }
+                SettingRow("While holding a grip", help: "Use the stick to rotate or change distance. Hold trigger and move the stick sideways to curve a screen.", showsDivider: false) { EmptyView() }
+            }
+            Text("For keyboard portal tracing, use the trigger to mark each corner, grip to undo, and the menu button to cancel.")
+                .font(.caption).foregroundColor(.secondary)
+        }
+    }
+}
+
 private struct DirectPerformancePanel: View {
     @ObservedObject var controller: DirectStatusItemController
     @ObservedObject var metrics: DirectMetricsStore
@@ -1156,6 +1522,9 @@ private struct DirectPerformancePanel: View {
                 }
 
                 SettingsGroup {
+                    SettingRow("USB link speed", help: "Negotiated cable speed, not current video throughput.") {
+                        Text(controller.usbLinkSpeed ?? "Not detected").foregroundColor(.secondary)
+                    }
                     SettingRow("Dashboard prepare / CPU render") {
                         Text(newtLive ? "\(ms(latestNewt?.prepareMs)) / \(ms(latestNewt?.renderMs))" : "—")
                             .monospacedDigit().foregroundColor(.secondary)
@@ -1176,7 +1545,7 @@ private struct DirectPerformancePanel: View {
     }
 }
 
-private struct BrandHeader: View {
+struct BrandHeader: View {
     var body: some View {
         HStack(spacing: 16) {
             Image(nsImage: NSApp.applicationIconImage)
@@ -1210,7 +1579,7 @@ private struct BrandHeader: View {
     }
 }
 
-private struct SettingsGroup<Content: View>: View {
+struct SettingsGroup<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {

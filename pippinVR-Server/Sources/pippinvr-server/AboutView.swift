@@ -48,6 +48,13 @@ struct AboutView: View {
                 .font(.system(size: 12, weight: .medium))
                 .help("https://github.com/triscuitcircuit/PippinVR")
 
+            Text("PippinVR is open source under GPLv3.")
+                .font(.system(size: 11)).foregroundColor(.secondary)
+            Link("Read the license", destination: URL(string: "https://github.com/triscuitcircuit/PippinVR/blob/main/LICENSE")!)
+                .font(.system(size: 11))
+            Link("Report a problem", destination: URL(string: "https://github.com/triscuitcircuit/PippinVR/issues/new?template=bug_report.md")!)
+                .font(.system(size: 11))
+
             Divider()
                 .padding(.vertical, 6)
                 .frame(width: 160)

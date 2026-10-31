@@ -17,6 +17,22 @@ enum class Anchor {
     Dashboard,
 };
 
+enum class RotationMode { Fixed, Spin, FaceUser };
+enum class DecorationShape { None, Cube, CutCube, Fractal };
+
+inline bool RotationYaw(RotationMode mode, float dx, float dz, double elapsedSeconds, float speed, float& halfAngle) {
+    if (mode == RotationMode::FaceUser) {
+        if (dx * dx + dz * dz <= 0.000001f) return false;
+        halfAngle = std::atan2(dx, dz) * 0.5f;
+        return true;
+    }
+    if (mode == RotationMode::Spin) {
+        halfAngle = float(std::fmod(elapsedSeconds * speed, 360.0) * 3.141592653589793 / 360.0);
+        return true;
+    }
+    return false;
+}
+
 struct Button {
     std::string id;
     std::string label;
@@ -31,6 +47,13 @@ struct PanelSpec {
     Anchor anchor = Anchor::World;
     float width = 0.55f;
     float position[3] = {0, -0.05f, -0.9f};
+    float orientation[4] = {0, 0, 0, 1};
+    RotationMode rotation = RotationMode::Fixed;
+    float degreesPerSecond = 30;
+    DecorationShape decoration = DecorationShape::None;
+    float cubeSize = 0.14f;
+    float cubeColor[3] = {0.25f, 0.78f, 0.68f};
+    float cubeSpeed = 25;
     bool closable = true;
     float accent[3] = {0.45f, 0.85f, 0.72f};
 };

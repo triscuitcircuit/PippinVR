@@ -34,7 +34,25 @@ struct MetricsParserTest {
         ) else { fatalError("metalfx parse failed") }
         assert(input == "2048x1330" && output == "3072x1994")
 
+        guard case let .cameraStalled(stream, skipped)? = DirectMetricsParser.parse(
+            line: "ERROR CAMERA_DECODE stream 0: stalled, 100 frames without a usable keyframe (test)"
+        ) else { fatalError("camera stall parse failed") }
+        assert(stream == 0 && skipped == 100)
+        guard case let .cameraRecovered(recoveredStream, waitMs, recoveredSkipped)? = DirectMetricsParser.parse(
+            line: "INFO CAMERA_RECOVERY stream 1: keyframe received 10387 ms after the wait began, 264 frames skipped; decoding resumes"
+        ) else { fatalError("camera recovery parse failed") }
+        assert(recoveredStream == 1 && waitMs == 10387 && recoveredSkipped == 264)
+        assert(DirectMetricsParser.parse(line: "CAMERA_RECOVERY decoder stalled; restarting camera stream") == nil)
+
         assert(DirectMetricsParser.parse(line: " unrelated log ") == nil)
+
+        let camera = DirectMetricsStore()
+        camera.ingest(line: "CAMERA_DECODE stream 0: stalled, 100 frames without a usable keyframe (test)")
+        camera.ingest(line: "CAMERA_DECODE stream 1: stalled, 101 frames without a usable keyframe (test)")
+        camera.ingest(line: "CAMERA_RECOVERY stream 0: keyframe received 10387 ms after the wait began, 264 frames skipped")
+        assert(camera.cameraReports[0]?.waiting == false && camera.cameraReports[1]?.waiting == true)
+        camera.clearCameraReports()
+        assert(camera.cameraReports.isEmpty)
 
         let store = DirectMetricsStore()
         store.ingest(line: "[Newt] rendered 90 frames (120.0 fps, runtime shouldRender=1, submitted=1)")

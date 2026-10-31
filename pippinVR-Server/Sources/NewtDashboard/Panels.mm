@@ -5,8 +5,10 @@
 #include "Environment.h"
 #include "EnvironmentModel.h"
 #include "Metrics.h"
+#include "ScreenLabelPreferences.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -34,6 +36,8 @@ XrVector3f ModelGridPosition(size_t index) {
 
 void NewtXR::RemoveModel(int index) {
     if (index < 0 || index >= static_cast<int>(mModels.size())) return;
+    if (!mModels[index]->addonID.empty())
+        ReportAddonModel(mModels[index]->addonID, mModels[index]->addonRevision, "removed");
     for (auto& part : mModels[index]->parts) {
         mCore->DestroyBuffer(part.mesh);
         mCore->DestroyTexture(part.texture);
@@ -41,6 +45,8 @@ void NewtXR::RemoveModel(int index) {
     mModels.erase(mModels.begin() + index);
     if (mModels.empty()) {
         mActiveModel = 0;
+    } else if (mActiveModel > index) {
+        mActiveModel--;
     } else if (mActiveModel >= static_cast<int>(mModels.size())) {
         mActiveModel = static_cast<int>(mModels.size()) - 1;
     }
@@ -52,6 +58,8 @@ void NewtXR::RemoveModel(int index) {
 }
 
 void NewtXR::ClearEnvironmentModel() {
+    for (const auto& model : mModels)
+        if (!model->addonID.empty()) ReportAddonModel(model->addonID, model->addonRevision, "removed");
     for (auto& model : mModels) {
         for (auto& part : model->parts) {
             mCore->DestroyBuffer(part.mesh);
@@ -212,6 +220,7 @@ void NewtXR::AddPanel(bool camera, uint32_t source, bool displayID, const std::s
         else panel->camera->StartCamera(source, mCaptureFPS);
     } else {
         panel->screen = std::make_unique<ScreenCaptureManager>();
+        if (displayID) panel->displaySourceID = source;
         if (displayID) panel->screen->SetDisplayID(source);
         panel->screen->Start(displayID ? 0 : source, mCaptureFPS);
     }
@@ -278,11 +287,26 @@ void NewtXR::ApplyCommands() {
     for (const auto& command : pending) {
         if (command.rfind("stereo:",0)==0 && !mPanels.empty()) {
             const std::string mode=command.substr(7);
-            if (mode=="0" || mode=="1" || mode=="2" || mode=="3" || mode=="4") mPanels[mActivePanel]->stereoMode=std::stoi(mode);
+            if (mode=="0" || mode=="1" || mode=="2" || mode=="3" || mode=="4" || mode=="5" || mode=="6") mPanels[mActivePanel]->stereoMode=std::stoi(mode);
+            continue;
+        }
+        if (command.rfind("stereo-align:", 0) == 0 && !mPanels.empty()) {
+            const std::string value = command.substr(13);
+            const std::vector<std::string> allowed = {"-30", "-25", "-20", "-15", "-10", "-5", "0", "5", "10", "15", "20", "25", "30"};
+            if (std::find(allowed.begin(), allowed.end(), value) != allowed.end()) {
+                mPanels[mActivePanel]->stereoAlignment = std::stoi(value) / 100.0f;
+                mNotice = "Stereo alignment " + value + "%";
+                mRenderedMenuSelected = -1;
+            }
             continue;
         }
         if (command.rfind("notice:", 0) == 0) {
             mNotice = command.substr(7); mRenderedMenuSelected = -1; continue;
+        }
+        if (command == "screen-labels:reload") {
+            SetScreenCaptureBadgeVisible(LoadScreenLabelPreference());
+            mRenderedMenuSelected = -1; mContentDirty = true;
+            continue;
         }
         if (command == "stop") { gFadeRequested.store(true); continue; }
         if (command.rfind("add-device:", 0) == 0) { AddPanel(true, 0, false, command.substr(11)); continue; }
@@ -411,8 +435,34 @@ void NewtXR::ApplyCommands() {
             mRenderedMenuSelected = -1;
             continue;
         }
-        if (command == "add-media") { AddPanel(true, UINT32_MAX); continue; }
-        if (command.rfind("add-screen:", 0) == 0 || command.rfind("add-camera:", 0) == 0 || command.rfind("add-display:", 0) == 0) {
+        if (command == "add-media") { RequestHost(4); mNotice = "Choose a video on your Mac"; mRenderedMenuSelected = -1; continue; }
+        if (command.rfind("add-demo-display:", 0) == 0) {
+            unsigned id = 0, index = 0;
+            if (std::sscanf(command.c_str(), "add-demo-display:%u:%u", &id, &index) == 2 && index < 24 && mPanels.size() < kMaxPanels) {
+                const bool hasOrbit = std::any_of(mPanels.begin(), mPanels.end(), [](const auto& p) { return p->demoOrbitIndex >= 0; });
+                if (!hasOrbit) {
+                    mDemoOrbitCenter = mViewerPose.position;
+                    const Vec3 forward = Rotate(mViewerPose.orientation, {0, 0, -1});
+                    mDemoOrbitHeading = std::atan2(forward.x, -forward.z);
+                    mDemoOrbitStarted = std::chrono::steady_clock::now();
+                }
+                AddPanel(false, id, true);
+                auto& panel = *mPanels.back();
+                panel.demoOrbitIndex = static_cast<int>(index);
+                panel.width = 0.68f; panel.height = 0.425f;
+            }
+        } else if (command.rfind("remove-display:", 0) == 0) {
+            const auto value = command.substr(15);
+            if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos || value.size() > 10 || std::stoull(value) > UINT32_MAX) continue;
+            const auto id = static_cast<uint32_t>(std::stoull(value));
+            auto it = std::find_if(mPanels.begin(), mPanels.end(), [id](const auto& p) { return id != 0 && p->displaySourceID == id; });
+            if (it == mPanels.end()) continue;
+            CheckVk(vkDeviceWaitIdle(mCore->Device()), "remove display panel");
+            mCore->DestroyTexture((*it)->texture); mCore->DestroyTexture((*it)->badgeTexture);
+            (*it)->gpuTexture.reset(); (*it)->gpuTextureRight.reset();
+            for (auto& b : (*it)->meshes) mCore->DestroyBuffer(b);
+            mPanels.erase(it); mActivePanel = 0; mGrabbedPanel = -1; mGrabHand = -1;
+        } else if (command.rfind("add-screen:", 0) == 0 || command.rfind("add-camera:", 0) == 0 || command.rfind("add-display:", 0) == 0) {
             const auto value = command.substr(command.find(':') + 1);
             if (!value.empty() && value.find_first_not_of("0123456789") == std::string::npos && value.size() <= 10 && std::stoull(value) <= UINT32_MAX)
                 AddPanel(command.rfind("add-camera:", 0) == 0, static_cast<uint32_t>(std::stoull(value)), command.rfind("add-display:", 0) == 0);
@@ -510,6 +560,7 @@ int NewtXR::ModelHit(const XrPosef& ray, int& modelIndex, float& distance) {
     distance = 1000.0f;
     for (size_t i = 0; i < mModels.size(); ++i) {
         const auto& model = *mModels[i];
+        if (!model.addonParentPanel.empty()) continue;
         const float s = std::max(0.01f, model.scale);
         const auto inv = Conjugate(model.pose.orientation);
         const Vec3 origin = Rotate(inv, {
@@ -665,7 +716,22 @@ void NewtXR::SelectItem(int index) {
     }
     if(index==100 || index==102) return;
     if(index==103) { mGridColor.enabled=!mGridColor.enabled; mContentDirty=true; return; }
+    if(index==111) {
+        const bool visible = !ScreenCaptureBadgeVisible();
+        if (SaveScreenLabelPreference(visible)) {
+            SetScreenCaptureBadgeVisible(visible);
+            mNotice = visible ? "Screen labels on" : "Screen labels off";
+        } else {
+            mNotice = "Could not save screen label preference";
+        }
+        mRenderedMenuSelected = -1;
+        mContentDirty = true;
+        return;
+    }
     if(index==107) { SetAudioMode(systemaudio::NextMode(mAudio.mode)); return; }
+    if(index==108) { RequestHost(5); mNotice = "Recording: check the VR View on your Mac"; mRenderedMenuSelected = -1; return; }
+    if(index==109) { RequestHost(6); mNotice = "Changing recording view…"; mRenderedMenuSelected = -1; return; }
+    if(index==110) { RequestHost(7); mNotice = "Changing headset desktop view…"; mRenderedMenuSelected = -1; return; }
     if(index==101) { mMediaVolume=mMediaVolume>=0.99f?0:std::min(1.0f,mMediaVolume+0.1f); SetMediaVolume(mMediaVolume); mContentDirty=true; return; }
     if (index < 0 || index >= static_cast<int>(kMenuItems.size())) return;
     mSelected = index;

@@ -1,6 +1,9 @@
 .DS_Store
 .idea/
 *.~undo-tree~
+*.log
+*.py[cod]
+**/*_NOTES.md
 
 
 /pippinVR-Server/.swiftpm/
@@ -39,5 +42,13 @@ MERGE-STAGING.md
 /pippinVR-Server/NATURAL_HAND_OCCLUSION.md
 /pippinVR-Server/HAND_BENCHMARK.md
 /pippinVR-Server/DIRECT_USB_NOTES.md
+/pippinVR-Server/SPARKLE.md
 **/__pycache__/
 *.dSYM/
+/pippinVR-Server/examples/**/*.tex
+/pippinVR-Server/examples/**/*.aux
+/pippinVR-Server/examples/**/*.fdb_latexmk
+/pippinVR-Server/examples/**/*.fls
+/pippinVR-Server/examples/**/*.out
+/pippinVR-Server/examples/**/*.toc
+/pippinVR-Server/examples/**/*.xdv

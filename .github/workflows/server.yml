@@ -216,6 +216,21 @@ jobs:
         run: |
           python3 pippinVR-Server/build_scripts/verify-bundle.py pippinVR-Server/PippinVR.app --sdk "$VULKAN_SDK" --smoke
 
+      - name: Dashboard and add-on tests
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          python3 pippinVR-Server/Tests/DirectUSB/run_dashboard_tests.py
+          swiftc pippinVR-Server/Sources/pippinvr-server/DirectMetrics.swift \
+            pippinVR-Server/Sources/pippinvr-server/AddonManager.swift \
+            pippinVR-Server/Tests/DirectUSB/addon_manager_test.swift -o "$RUNNER_TEMP/addon-manager-test"
+          "$RUNNER_TEMP/addon-manager-test"
+          swiftc pippinVR-Server/Sources/pippinvr-server/DirectMetrics.swift \
+            pippinVR-Server/Sources/pippinvr-server/AddonManager.swift \
+            pippinVR-Server/Sources/pippinvr-server/AddonAPIServer.swift \
+            pippinVR-Server/Tests/DirectUSB/addon_api_test.swift -o "$RUNNER_TEMP/addon-api-test"
+          "$RUNNER_TEMP/addon-api-test"
+
       - name: Package Installer
         working-directory: pippinVR-Server
         env:

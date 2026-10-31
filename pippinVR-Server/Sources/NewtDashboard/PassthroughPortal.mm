@@ -4,6 +4,7 @@
 #include "include/NewtLog.h"
 #include "InteractionGeometry.h"
 #include "HandBenchmark.h"
+#include "AddonCameraBridge.h"
 #import <CoreVideo/CoreVideo.h>
 #include <algorithm>
 #include <cmath>
@@ -218,6 +219,8 @@ bool NewtXR::FetchCameraFrames() {
     const bool copied = mPassthroughCopyEx ? mPassthroughCopyEx(&mPassthroughSeq, &left, &right, &captureNs)
                                            : mPassthroughCopy(&mPassthroughSeq, &left, &right);
     if (!copied) return false;
+    if (mPassthrough.allowed && PassthroughPanel() >= 0)
+        SubmitAddonCameraFrames(static_cast<CVPixelBufferRef>(left), static_cast<CVPixelBufferRef>(right), captureNs);
     HandBenchmarkSubmit(static_cast<CVPixelBufferRef>(left), static_cast<CVPixelBufferRef>(right), captureNs);
     if (HandBenchmarkEnabled() && PassthroughPanel() < 0 && !CameraHandsActive()) {
 

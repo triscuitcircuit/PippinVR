@@ -119,6 +119,9 @@ final class DirectMonadoSession: @unchecked Sendable {
             environment["QL_METRICS_FILE"] = metricsURL.path
         }
 
+        environment["QL_MIRROR_SOCKET"] = VRMirrorConfiguration.socketPath
+        environment["QL_MIRROR_FPS_FILE"] = VRMirrorConfiguration.fpsURL.path
+
         DirectWristClockPreferences.migrateIfNeeded()
 
         if environment["QL_PASSTHROUGH"] == nil {
@@ -262,6 +265,7 @@ final class DirectMonadoSession: @unchecked Sendable {
     private static let dashboardOverrideKeys = [
         "QL_OVERRIDE_FPS", "QL_OVERRIDE_SCALE", "QUEST_LINK_LOG", "QL_METRICS_FILE",
         "QL_LINK_PROBE", "QL_AUDIO_PROBE", "QL_CAMERA_PROBE", "QL_PASSTHROUGH",
+        "QL_MIRROR_SOCKET", "QL_MIRROR_FPS_FILE",
         "QL_FLOAT_PROBE", "QL_FLOAT_PROBE_SECONDS", "QL_AUDIO_TEST_TONE",
         "PIPPIN_HAND_BENCHMARK", "PIPPIN_HAND_BENCHMARK_DIR", "PIPPIN_HAND_BENCHMARK_WIDTH",
         "PIPPIN_HAND_BENCHMARK_HZ",

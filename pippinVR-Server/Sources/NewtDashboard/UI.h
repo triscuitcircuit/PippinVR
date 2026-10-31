@@ -17,7 +17,7 @@ constexpr std::array<const char*, 9> kMenuItems = {
     "Screens", "+ Screen", "Remove", "Reset", "Settings", "Hide", "Exit", "3D Apps", "Media"
 };
 
-PixelImage RenderMenu(int selected, const char* notice = "", bool buttons = true);
+PixelImage RenderMenu(int selected, const char* notice = "", bool buttons = true, int leftBattery = -1, int rightBattery = -1);
 PixelImage RenderContent(Page page, GridColor grid = {}, float volume = 0.7f,
                          const std::vector<std::string>& apps = {},
                          const WristClockSettings& clock = {}, int settingsTab = 0,
@@ -28,6 +28,7 @@ PixelImage RenderTracePrompt(NSString* title, NSString* detail, int placed);
 PixelImage RenderAlertCard(NSString* title, NSString* detail);
 PixelImage RenderDockButton(int index, bool selected);
 
+void DrawPippinLogo(NSRect rect);
 PixelImage RenderLogo();
 NSString* WristClockText(const WristClockSettings& settings = {});
 PixelImage RenderWristClock(NSString* text, const WristClockSettings& settings = {});

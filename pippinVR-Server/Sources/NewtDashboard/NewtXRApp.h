@@ -71,6 +71,8 @@ private:
         std::string badgeLabel;
         bool gpuPathLogged = false;
         std::unique_ptr<ScreenCaptureManager> screen;
+        uint32_t displaySourceID = 0;
+        int demoOrbitIndex = -1;
         std::unique_ptr<MediaCaptureManager> camera;
         FrameSource& Source() { return screen ? static_cast<FrameSource&>(*screen) : static_cast<FrameSource&>(*camera); }
         uint64_t sequence = 0;
@@ -80,6 +82,7 @@ private:
         float curvature = 0, builtCurvature = -1;
         std::array<Buffer,6> meshes;
         int stereoMode = 0;
+        float stereoAlignment = 0;
 
 
         bool passthrough = false;
@@ -93,6 +96,9 @@ private:
     };
     std::vector<std::string> mApps;
     std::vector<std::unique_ptr<Panel>> mPanels;
+    XrVector3f mDemoOrbitCenter{};
+    float mDemoOrbitHeading = 0;
+    std::chrono::steady_clock::time_point mDemoOrbitStarted{};
     int mActivePanel = 0;
     uint32_t mCaptureFPS = 30;
     GridColor mGridColor;
@@ -104,7 +110,8 @@ private:
 
     std::chrono::steady_clock::time_point mFadeStart{};
     float mFadeAlpha = 0;
-    Buffer mCubeBuffer, mGridBuffer, mRayBuffer, mDockBuffer;
+    Buffer mCubeBuffer, mCubeEdges, mCutCube, mCutCubeEdges, mFractalCube, mFractalCubeEdges, mGridBuffer, mRayBuffer, mDockBuffer;
+    uint32_t mCutCubeCount = 0, mCutCubeEdgeCount = 0, mFractalCubeCount = 0, mFractalCubeEdgeCount = 0;
     std::array<Buffer,18> mButtonFaces, mButtonBodies;
     uint32_t mCubeCount = 0, mGridCount = 0;
 
@@ -156,6 +163,7 @@ private:
         CustomPanelHandler handler;
         bool dirty = true, removed = false, hidden = false, placed = false, fromScript = false;
         XrPosef worldPose = IdentityPose();
+        std::chrono::steady_clock::time_point rotationStart = std::chrono::steady_clock::now();
         double fileTime = 0;
     };
     std::vector<CustomPanel> mCustomPanels;
@@ -193,8 +201,19 @@ private:
         Vec3 halfExtents{0.5f, 0.5f, 0.5f};
         std::string summary;
         std::string path;
+        std::string addonID, addonRevision, addonParentPanel;
+        customui::RotationMode addonRotation = customui::RotationMode::Fixed;
+        float addonRotationSpeed = 30;
+        XrQuaternionf addonBaseOrientation{0, 0, 0, 1};
+        bool addonWasGrabbed = false;
+        std::chrono::steady_clock::time_point addonRotationStart{};
     };
     std::vector<std::unique_ptr<ModelInstance>> mModels;
+    std::map<std::string, std::string> mAddonModelRequests;
+    std::chrono::steady_clock::time_point mAddonModelsLastScan{};
+    void PollAddonModels();
+    void AnimateAddonModels();
+    void ReportAddonModel(const std::string& id, const std::string& revision, const char* state, const char* error = nullptr);
     ModelInstance* AddModelFromFile(const std::string& path);
     int mActiveModel = 0;
     int mGrabbedModel = -1;
@@ -423,6 +442,10 @@ private:
     std::string mNotice = "Add Screen creates an independent Mac desktop";
     int mSelected = 0;
     int mRenderedMenuSelected = -1;
+    int mControllerBattery[2] = {-1, -1};
+    int (*mControllerBatteryPercent)(int) = nullptr;
+    void* mBatteryRuntime = nullptr;
+    std::chrono::steady_clock::time_point mBatteryPoll{};
     Page mPage = Page::Screens;
     Page mRenderedPage = Page::Screens;
     bool mContentDirty = true;

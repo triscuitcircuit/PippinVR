@@ -1,11 +1,29 @@
 #include "NewtXRApp.h"
 #include "InteractionGeometry.h"
 #include "HandOcclusion.h"
+#include "FractalDecoration.h"
 void NewtXR::CreateRenderAssets() {
     const std::vector<Vec3> cube = MakeCube();
     mCubeBuffer = mCore->CreateBuffer(cube.size() * sizeof(Vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     mCore->UploadBuffer(mCubeBuffer, cube.data(), cube.size() * sizeof(Vec3));
     mCubeCount = static_cast<uint32_t>(cube.size());
+    const Vec3 corners[8] = {{-.5f,-.5f,-.5f}, {.5f,-.5f,-.5f}, {.5f,.5f,-.5f}, {-.5f,.5f,-.5f},
+                             {-.5f,-.5f,.5f}, {.5f,-.5f,.5f}, {.5f,.5f,.5f}, {-.5f,.5f,.5f}};
+    const int edges[12][2] = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
+    std::vector<Vec3> cubeEdges;
+    for (const auto& edge : edges) { cubeEdges.push_back(corners[edge[0]]); cubeEdges.push_back(corners[edge[1]]); }
+    mCubeEdges = mCore->CreateBuffer(cubeEdges.size() * sizeof(Vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    mCore->UploadBuffer(mCubeEdges, cubeEdges.data(), cubeEdges.size() * sizeof(Vec3));
+    const auto cut = customui::MakeSponge(1), fractal = customui::MakeSponge(2);
+    auto uploadDecoration = [&](const std::vector<Vec3>& points, Buffer& buffer, uint32_t& count) {
+        buffer = mCore->CreateBuffer(points.size() * sizeof(Vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        mCore->UploadBuffer(buffer, points.data(), points.size() * sizeof(Vec3));
+        count = static_cast<uint32_t>(points.size());
+    };
+    uploadDecoration(cut.triangles, mCutCube, mCutCubeCount);
+    uploadDecoration(cut.edges, mCutCubeEdges, mCutCubeEdgeCount);
+    uploadDecoration(fractal.triangles, mFractalCube, mFractalCubeCount);
+    uploadDecoration(fractal.edges, mFractalCubeEdges, mFractalCubeEdgeCount);
 
     const std::vector<Vec3> grid = MakeGrid();
     mGridBuffer = mCore->CreateBuffer(grid.size() * sizeof(Vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);

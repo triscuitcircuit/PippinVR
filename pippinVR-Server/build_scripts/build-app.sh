@@ -88,6 +88,10 @@ fi
 chmod +x "${MACOS_DIR}/${EXECUTABLE_NAME}"
 
 
+mkdir -p "${RESOURCES_DIR}/Licenses"
+cp "${PIPPIN_SERVER_DIR}/../LICENSE" "${RESOURCES_DIR}/Licenses/PippinVR-LICENSE.txt"
+
+cp "${PIPPIN_SERVER_DIR}/examples/addons/hello/pippin-addon.json" "${RESOURCES_DIR}/hello-pippin-addon.json"
 cp "${PIPPIN_SERVER_DIR}/Resources/Info.plist" "${CONTENTS_DIR}/Info.plist"
 python3 "${SCRIPT_DIR}/configure-updates.py" "${CONTENTS_DIR}/Info.plist"
 if [ -f "${PIPPIN_SERVER_DIR}/../figures/pippin.png" ]; then

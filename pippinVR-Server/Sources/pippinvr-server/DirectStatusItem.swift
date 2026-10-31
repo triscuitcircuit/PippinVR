@@ -11,10 +11,18 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
     private var requestTimer: Timer?
     private let session: DirectMonadoSession
     private var virtualDisplays: [VirtualDisplay] = []
+    private var dashboardWasRunning = false
+    private var autoStartTask: Task<Void, Never>?
     private var panelSources: [CGDirectDisplayID?] = [nil]
     private var captureFPS = UserDefaults.standard.integer(forKey: "directCaptureFPS") == 0 ? 30 : UserDefaults.standard.integer(forKey: "directCaptureFPS")
     private var panelWidth = UserDefaults.standard.integer(forKey: "directPanelWidth") == 0 ? 1024 : UserDefaults.standard.integer(forKey: "directPanelWidth")
     @Published var running = false
+    @Published private(set) var usbLinkSpeed: String?
+    @Published private(set) var connectionError: String?
+    @Published private(set) var externalSession = false
+    @Published private(set) var activeApplication: String?
+    @Published private(set) var recoveringConnection = false
+    @Published private(set) var recoveryError: String?
     @Published var panelCount = 1
     @Published var deviceInfo: [USBLinkSpeed.DeviceInfo] = []
     @Published var settingsMenu = NSMenu()
@@ -44,6 +52,7 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
     private var dockOpenNotBefore: Date?
     private var dockOpenPanelLimitNotified = false
 
+    @Published var showScreenLabels = DirectScreenLabelPreferences.visible
     @Published var wristClockEnabled = DirectWristClockPreferences.enabled
     @Published var passthroughAllowed = DirectPassthroughPreferences.allowed
     @Published var passthroughEnabled = DirectPassthroughPreferences.enabled
@@ -84,6 +93,21 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
                     guard self.session.state.running else { continue }
                     if request == 3 || request >= 100 { self.launch3DApp(); continue }
                     if request == 4 { self.addMediaFile(); continue }
+                    if request == 5 {
+                        let message = VRViewWindowController.shared.toggleRecordingFromHeadset()
+                        self.session.command("notice:\(message)")
+                        continue
+                    }
+                    if request == 6 {
+                        let message = VRViewWindowController.shared.cycleModeFromHeadset()
+                        self.session.command("notice:\(message)")
+                        continue
+                    }
+                    if request == 7 {
+                        let message = VRViewWindowController.shared.toggleHeadsetVisibility()
+                        self.session.command("notice:\(message)")
+                        continue
+                    }
                     if request == 1 { self.addVirtualScreen() } else if request == 2 {
                         let item = NSMenuItem(); item.representedObject = "remove-last"
                         self.sendCommand(item)
@@ -200,7 +224,10 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
 
     private func rebuild() {
         wristClockEnabled = DirectWristClockPreferences.enabled
+        let labels = DirectScreenLabelPreferences.visible
+        if showScreenLabels != labels { showScreenLabels = labels }
         passthroughAllowed = DirectPassthroughPreferences.allowed
+        if !passthroughAllowed { AddonAPIServer.shared.setCameraAccess(false) }
         passthroughEnabled = DirectPassthroughPreferences.enabled
 
         if audioMode != DirectAudioPreferences.mode { audioMode = DirectAudioPreferences.mode }
@@ -210,8 +237,17 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
         syncSavedScene()
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let present = USBLinkSpeed.detectQuestLinkSpeed() != nil
+        let linkSpeed = USBLinkSpeed.detectQuestLinkSpeed()
+        let present = linkSpeed != nil
         let state = session.state
+        let dashboardRunning = state.running && !state.externallyActive && session.applicationName == nil
+        if dashboardRunning && !dashboardWasRunning { startAutomaticAddons() }
+        if !dashboardRunning { autoStartTask?.cancel(); autoStartTask = nil }
+        dashboardWasRunning = dashboardRunning
+        usbLinkSpeed = linkSpeed
+        connectionError = state.error
+        externalSession = state.externallyActive
+        activeApplication = session.applicationName
         updateStatusColor(running: state.running, present: present)
         if state.externallyActive {
             menu.addItem(withTitle: "Headset in use by another app (e.g. Godot Play)", action: nil, keyEquivalent: "")
@@ -267,6 +303,60 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
         rebuildSettings()
     }
 
+    private func startAutomaticAddons() {
+        let manager = AddonManager.shared
+        let ids = manager.addons.filter { $0.autoStart == true && $0.manifest.entrypoint != nil }.map(\.id)
+        guard !ids.isEmpty else { return }
+        let api = AddonAPIServer.shared
+        if !api.running && !api.starting {
+            startAddonAPI()
+        }
+        autoStartTask = Task { @MainActor [weak self] in
+            for _ in 0..<100 where api.starting && !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard !Task.isCancelled, let self, self.session.state.running, self.session.applicationName == nil else { return }
+            for id in ids where !manager.runningIDs.contains(id) {
+                guard api.running else { manager.reportStartError(api.error ?? "Could not start the local integration API.", id: id); continue }
+                do { try manager.run(id: id) } catch { manager.reportStartError(error.localizedDescription, id: id) }
+            }
+        }
+    }
+
+    func startAddonAPI() {
+        AddonAPIServer.shared.start(cameraAllowed: { [weak self] in self?.passthroughAllowed ?? false }, createDisplay: { [weak self] index in
+            guard let self else { throw AddonError.invalid("Direct USB is unavailable.") }
+            return try self.createAddonDisplay(index: index)
+        }, removeDisplay: { [weak self] id in self?.removeAddonDisplay(id: id) }) { [weak self] in
+            self?.session.state.running ?? false
+        }
+    }
+
+    private func createAddonDisplay(index: Int) throws -> UInt32 {
+        guard session.state.running && session.applicationName == nil else { throw AddonError.invalid("Connect Direct USB first.") }
+        guard panelSources.count < maxPanels else { throw AddonError.invalid("The 24-screen limit has been reached.") }
+        var config = DisplayConfig()
+        config.width = 960; config.height = 600; config.refreshHz = Double(captureFPS); config.hiDPI = false
+        config.serial = nextSerial; config.productID = 0x1234 + nextSerial; nextSerial += 1
+        config.name = "PippinVR Add-on \(virtualDisplays.count + 1)"
+        let display = try VirtualDisplay(config: config)
+        virtualDisplays.append(display)
+        panelSources.append(display.displayID)
+        fixupDisplayArrangement()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.fixupDisplayArrangement() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.fixupDisplayArrangement() }
+        session.command("add-demo-display:\(display.displayID):\(index)")
+        return display.displayID
+    }
+
+    private func removeAddonDisplay(id: UInt32) {
+        guard let index = panelSources.firstIndex(where: { $0 == id }) else { return }
+        panelSources.remove(at: index)
+        if session.state.running { session.command("remove-display:\(id)") }
+        virtualDisplays.removeAll { $0.displayID == id }
+        fixupDisplayArrangement()
+    }
+
     private func rebuildSettings() {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -299,10 +389,16 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
         menu.addItem(withTitle: "Hide dashboard: sticks move / resize · squeeze grabs and rotates", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
         let stereo = NSMenu()
-        for (index, title) in ["Flat (2D)", "Side-by-side 3D", "Side-by-side 3D (swap eyes)", "Over-under 3D", "Over-under 3D (swap eyes)"].enumerated() {
+        for (index, title) in ["Flat (2D)", "Side-by-side 3D", "Side-by-side 3D (swap eyes)", "Over-under 3D", "Over-under 3D (swap eyes)", "Side-by-side 3D (full width)", "Side-by-side 3D (full width, swap eyes)"].enumerated() {
             action(title, "stereo:\(index)", menu: stereo)
         }
+        let alignment = NSMenu()
+        for offset in [-30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30] {
+            let title = offset == 0 ? "No alignment" : "\(offset > 0 ? "+" : "")\(offset)%"
+            action(title, "stereo-align:\(offset)", menu: alignment)
+        }
         menu.addItem(withTitle: "Selected Screen 3D", action: nil, keyEquivalent: "").submenu = stereo
+        menu.addItem(withTitle: "Stereo eye alignment", action: nil, keyEquivalent: "").submenu = alignment
         let fps = NSMenu()
         for value in [15, 30, 60] {
             action("\(value) FPS", "fps:\(value)", menu: fps)
@@ -496,6 +592,16 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
         environmentFlippedHorizontally = scene.flippedHorizontally
     }
 
+    func setShowScreenLabels(_ visible: Bool) {
+        do {
+            try DirectScreenLabelPreferences.setVisible(visible)
+            showScreenLabels = visible
+            if session.state.running { session.command("screen-labels:reload") }
+        } catch {
+            Logger.warning("Could not save screen label preference: \(error)")
+        }
+    }
+
     func setPassthroughAllowed(_ allowed: Bool) {
         if allowed {
             let alert = NSAlert()
@@ -503,8 +609,8 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
             alert.informativeText = """
                 PippinVR will receive video from your headset’s passthrough cameras over USB \
                 and show it in a portal inside VR. The cameras stream only while the portal is \
-                open. Video is decoded on this Mac only to display it in your headset; it is \
-                never recorded, saved, or sent anywhere else.
+                open. Video can also appear in recordings and, if separately enabled, be shared \
+                with local API clients.
 
                 Takes effect from the next headset session. You can turn this off at any time.
                 """
@@ -517,6 +623,7 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
         }
         do { try DirectPassthroughPreferences.setAllowed(allowed) } catch { Logger.warning("Could not save camera access setting: \(error)") }
         passthroughAllowed = DirectPassthroughPreferences.allowed
+        if !passthroughAllowed { AddonAPIServer.shared.setCameraAccess(false) }
         passthroughEnabled = DirectPassthroughPreferences.enabled
         session.command("passthrough:reload")
     }
@@ -793,6 +900,31 @@ final class DirectStatusItemController: NSObject, ObservableObject, DockOpenedFi
             virtualDisplays.removeAll(); panelSources = [nil]
             session.connect(application: executable)
             returnToDashboard = true
+            rebuild()
+        }
+    }
+
+    func recoverConnection() {
+        guard !recoveringConnection, !switchingApplication, !shuttingDown,
+              !session.state.externallyActive, session.applicationName == nil,
+              USBLinkSpeed.detectQuestLinkSpeed() != nil else { return }
+        recoveryError = nil
+        recoveringConnection = true
+        returnToDashboard = false
+        Task { @MainActor in
+            if session.state.running { await session.stopAndWait() }
+            guard !shuttingDown else { recoveringConnection = false; return }
+            if session.state.running {
+                recoveryError = "The session has not stopped. Try disconnecting from the menu bar."
+            } else if session.state.externallyActive || session.applicationName != nil {
+                recoveryError = "Another VR app is using the headset. Close it before reconnecting."
+            } else if USBLinkSpeed.detectQuestLinkSpeed() == nil {
+                recoveryError = "The Quest is no longer detected over USB. Check the cable and try again."
+            } else {
+                metricsStore.clearCameraReports()
+                session.connect()
+            }
+            recoveringConnection = false
             rebuild()
         }
     }

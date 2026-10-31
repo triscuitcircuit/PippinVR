@@ -64,7 +64,7 @@ SavedScene NewtXR::CurrentScene() const {
         scene.environmentMissing = true;
     }
     for (const auto& model : mModels) {
-        if (model->path.empty()) continue;
+        if (model->path.empty() || !model->addonID.empty()) continue;
         SavedSceneModel saved;
         saved.path = model->path;
         saved.pose = model->pose;

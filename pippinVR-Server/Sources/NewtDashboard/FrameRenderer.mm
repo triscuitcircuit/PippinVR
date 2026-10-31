@@ -2,7 +2,11 @@
 #include "InteractionGeometry.h"
 #include "Metrics.h"
 #include "HandBenchmark.h"
+#include "StereoLayout.h"
 #include <cstdlib>
+#include <cstring>
+#include <dlfcn.h>
+#include <mach-o/dyld.h>
 #include <fstream>
 #include <filesystem>
 #include <sstream>
@@ -20,6 +24,16 @@ void NewtXR::OnPrepareFrame(const XrFrameState& frameState) {
     mLastPrepareStart = prepareNow;
     mPrepareStart = prepareNow;
     mHaveLastPrepareStart = true;
+    const float orbitElapsed = std::chrono::duration<float>(prepareNow - mDemoOrbitStarted).count();
+    for (size_t index = 0; index < mPanels.size(); ++index) {
+        auto& panel = *mPanels[index];
+        if (panel.demoOrbitIndex < 0 || int(index) == mGrabbedPanel || int(index) == mStretchPanel) continue;
+        const float angle = mDemoOrbitHeading + float(panel.demoOrbitIndex % 9) * (2.0f * 3.14159265358979323846f / 9.0f) + orbitElapsed * (3.14159265358979323846f / 90.0f);
+        const float dx = std::sin(angle) * 1.65f, dz = -std::cos(angle) * 1.65f;
+        panel.pose.position = {mDemoOrbitCenter.x + dx, mDemoOrbitCenter.y + 0.25f - float(panel.demoOrbitIndex / 9) * 0.55f, mDemoOrbitCenter.z + dz};
+        const float yaw = std::atan2(-dx, -dz);
+        panel.pose.orientation = {0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)};
+    }
     for(auto& panel:mPanels) if(panel->curvature!=panel->builtCurvature) {
         CheckVk(vkDeviceWaitIdle(mCore->Device()),"screen mesh update");
         for(int mode=0;mode<6;++mode) {
@@ -32,11 +46,34 @@ void NewtXR::OnPrepareFrame(const XrFrameState& frameState) {
     for(auto& panel:mPanels) if(panel->passthrough) UpdatePassthroughLens(*panel);
     PruneAlerts();
     PruneCustomPanels();
+    PollAddonModels();
+    AnimateAddonModels();
     SaveSceneIfChanged();
     mCore->BeginUploads();
     UpdateHandBenchmarkOverlay();
+    if (mMenuOpen && prepareNow - mBatteryPoll >= std::chrono::seconds(2)) {
+        mBatteryPoll = prepareNow;
+        if (!mControllerBatteryPercent) {
+            for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
+                const char* name = _dyld_get_image_name(i);
+                if (!name || !std::strstr(name, "libopenxr_monado")) continue;
+                void* handle = dlopen(name, RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD);
+                if (!handle) continue;
+                auto fn = reinterpret_cast<int (*)(int)>(dlsym(handle, "ql_controller_battery_percent"));
+                if (fn) { mBatteryRuntime = handle; mControllerBatteryPercent = fn; break; }
+                dlclose(handle);
+            }
+        }
+        for (int hand = 0; hand < 2; ++hand) {
+            const int battery = mControllerBatteryPercent ? mControllerBatteryPercent(hand) : -1;
+            if (battery != mControllerBattery[hand]) {
+                mControllerBattery[hand] = battery;
+                mRenderedMenuSelected = -1;
+            }
+        }
+    }
     if (mSelected != mRenderedMenuSelected) {
-        mCore->UpdateTexture(mMenuTexture, RenderMenu(mSelected, mNotice.c_str(), false));
+        mCore->UpdateTexture(mMenuTexture, RenderMenu(mSelected, mNotice.c_str(), false, mControllerBattery[0], mControllerBattery[1]));
         for(int i=0;i<9;++i) mCore->UpdateTexture(mButtonTextures[i],RenderDockButton(i,i==mSelected));
         mRenderedMenuSelected = mSelected;
     }
@@ -84,7 +121,7 @@ void NewtXR::OnPrepareFrame(const XrFrameState& frameState) {
                 }
                 panel->gpuTexture.reset();
                 panel->gpuTextureRight.reset();
-                mCore->UpdateTexture(panel->texture, NewtCaptureInternal::PixelImageFromCVPixelBuffer(buffer, label));
+                mCore->UpdateTexture(panel->texture, NewtCaptureInternal::PixelImageFromCVPixelBuffer(buffer, ScreenCaptureBadgeVisible() ? label : ""));
             } else if (panel->camera &&
                        GetLatestMediaPixelBuffers(panel->camera.get(),
                                                   panel->sequence,
@@ -330,6 +367,7 @@ void NewtXR::OnDrawEye(const Newt::EyeFrame& eye) {
             }
             for (size_t m = 0; m < mModels.size(); ++m) {
                 const auto& model = *mModels[m];
+                if (!model.addonParentPanel.empty()) continue;
                 if (static_cast<int>(m) == mActiveModel) {
                     auto local = IdentityPose();
                     local.position = {
@@ -388,7 +426,7 @@ void NewtXR::OnDrawEye(const Newt::EyeFrame& eye) {
                     const Vec3 normal = Rotate(pose.orientation, {0, 0, 0.01f});
                     pose.position.x += normal.x; pose.position.y += normal.y; pose.position.z += normal.z;
                     const bool isStereo = (panel.stereoMode > 0) || (panel.gpuTextureRight != nullptr);
-                    const bool reverseEyes = (panel.stereoMode == 2 || panel.stereoMode == 4);
+                    const bool reverseEyes = (panel.stereoMode == 2 || panel.stereoMode == 4 || panel.stereoMode == 6);
                     const int stereoEye = (i % 2) ^ (reverseEyes ? 1 : 0);
 
                     if (panel.gpuTexture) {
@@ -406,21 +444,11 @@ void NewtXR::OnDrawEye(const Newt::EyeFrame& eye) {
                             region.source = {0.0f, 0.0f, 1.0f, 1.0f};
                             region.destination = {(1.0f - w) * 0.5f, (1.0f - h) * 0.5f, w, h};
                         } else if (panel.stereoMode > 0) {
-                            const bool vertical = (panel.stereoMode >= 3);
                             const float fullAspect = (panel.gpuWidth > 0 && panel.gpuHeight > 0)
-                                ? (float(panel.gpuWidth) / float(panel.gpuHeight))
-                                : panelAspect;
-                            float eyeAspect = fullAspect;
-                            if (!vertical) {
-                                eyeAspect = (fullAspect > 2.4f) ? (fullAspect * 0.5f) : fullAspect;
-                                region.source = {stereoEye * 0.5f, 0.0f, 0.5f, 1.0f};
-                            } else {
-                                eyeAspect = (fullAspect < 1.1f) ? (fullAspect * 2.0f) : fullAspect;
-                                region.source = {0.0f, stereoEye * 0.5f, 1.0f, 0.5f};
-                            }
-                            const float w = std::min(1.0f, eyeAspect / panelAspect);
-                            const float h = std::min(1.0f, panelAspect / eyeAspect);
-                            region.destination = {(1.0f - w) * 0.5f, (1.0f - h) * 0.5f, w, h};
+                                ? (float(panel.gpuWidth) / float(panel.gpuHeight)) : panelAspect;
+                            const auto layout = CalculateStereoLayout(panel.stereoMode, stereoEye, fullAspect, panelAspect, panel.stereoAlignment);
+                            region.source = {layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight};
+                            region.destination = {layout.destinationX, layout.destinationY, layout.destinationWidth, layout.destinationHeight};
                         } else {
                             const float aspect = (panel.gpuWidth > 0 && panel.gpuHeight > 0)
                                 ? (float(panel.gpuWidth) / float(panel.gpuHeight))
@@ -451,7 +479,8 @@ void NewtXR::OnDrawEye(const Newt::EyeFrame& eye) {
                             {panel.width, panel.height, panel.width}), *activeTex, region, textureMesh, textureVertices);
 
 
-                        if (!isStereo && !panel.passthrough && panel.badgeTexture.initialized) {
+                        if (!isStereo && !panel.passthrough && panel.badgeTexture.initialized &&
+                            (!panel.screen || ScreenCaptureBadgeVisible())) {
                             XrPosef badgePose = pose;
                             badgePose.position.x += normal.x * 0.1f;
                             badgePose.position.y += normal.y * 0.1f;
@@ -462,7 +491,7 @@ void NewtXR::OnDrawEye(const Newt::EyeFrame& eye) {
                     } else {
                         const Buffer* eyeMesh = &panel.meshes[0];
                         if (panel.stereoMode > 0) {
-                            const bool vertical = panel.stereoMode >= 3;
+                            const bool vertical = panel.stereoMode == 3 || panel.stereoMode == 4;
                             eyeMesh = &panel.meshes[(vertical ? 3 : 1) + stereoEye];
                         }
                         mCore->DrawTextured(cmd, viewProj, PoseMatrix(pose,

@@ -23,7 +23,7 @@ using namespace NewtCaptureInternal;
 @property (nonatomic, copy) NSString* activeSourceName;
 @property (nonatomic, assign) int sourceMode;
 @property (nonatomic, assign) uint64_t lastCameraFrameMs;
-@property (nonatomic, assign) double animPhase;
+@property (nonatomic, assign) BOOL placeholderPublished;
 - (instancetype)initWithManager:(MediaCaptureManager*)mgr;
 - (void)start;
 - (void)stop;
@@ -38,34 +38,15 @@ using namespace NewtCaptureInternal;
         _activeSourceName = @"Initializing Media Feed...";
         _sourceMode = 0;
         _lastCameraFrameMs = 0;
-        _animPhase = 0.0;
+        _placeholderPublished = NO;
     }
     return self;
 }
 
 - (NSString*)findVideoFilePath {
-    if (!_manager->VideoPath().empty()) return [NSString stringWithUTF8String:_manager->VideoPath().c_str()];
-    const char* envPath = std::getenv("NEWT_VIDEO_PATH");
-    NSFileManager* fm = [NSFileManager defaultManager];
-    if (envPath && envPath[0] != '\0') {
-        NSString* p = [NSString stringWithUTF8String:envPath];
-        if ([fm fileExistsAtPath:p]) return p;
-    }
-    NSArray<NSString*>* dirs = @[
-        [fm currentDirectoryPath],
-        [NSHomeDirectory() stringByAppendingPathComponent:@"Movies"],
-        [NSHomeDirectory() stringByAppendingPathComponent:@"Desktop"]
-    ];
-    NSArray<NSString*>* exts = @[@"mp4", @"mov", @"m4v"];
-    for (NSString* dir in dirs) {
-        NSArray<NSString*>* files = [fm contentsOfDirectoryAtPath:dir error:nil];
-        for (NSString* f in files) {
-            if ([exts containsObject:f.pathExtension.lowercaseString]) {
-                return [dir stringByAppendingPathComponent:f];
-            }
-        }
-    }
-    return nil;
+    if (!_manager || _manager->VideoPath().empty()) return nil;
+    NSString* path = [NSString stringWithUTF8String:_manager->VideoPath().c_str()];
+    return [[NSFileManager defaultManager] fileExistsAtPath:path] ? path : nil;
 }
 
 - (void)setupVideoPlayerIfAvailable {
@@ -156,10 +137,6 @@ using namespace NewtCaptureInternal;
 - (void)start {
     dispatch_async(_mediaQueue, ^{
         [self setupVideoPlayerIfAvailable];
-        if (!self.player) {
-            [self setupCameraIfAuthorized];
-        }
-
         if (!self.tickTimer) {
             self.tickTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.mediaQueue);
             dispatch_source_set_timer(self.tickTimer,
@@ -243,58 +220,16 @@ using namespace NewtCaptureInternal;
         return;
     }
 
-    _animPhase += 1.0 / 30.0;
-    const double t = _animPhase;
-
+    if (_placeholderPublished) return;
+    _placeholderPublished = YES;
+    const BOOL selected = !_manager->VideoPath().empty();
     PixelImage img = MakeImage(^(NSRect bounds) {
         FillRounded(bounds, 24, RGB(0.045f, 0.06f, 0.08f, 0.99f));
-        NSColor* white = RGB(0.94f, 0.96f, 0.95f);
-        NSColor* cyan = RGB(0.38f, 0.86f, 0.82f);
-        NSColor* amber = RGB(0.95f, 0.70f, 0.25f);
-        NSColor* muted = RGB(0.60f, 0.66f, 0.70f);
-
-        DrawText(@"Media  •  Live Stereo & Video Feed", NSMakeRect(48, 28, 650, 44), 34, YES, white);
-
-        int mins = static_cast<int>(t) / 60;
-        int secs = static_cast<int>(t) % 60;
-        int frames = static_cast<int>(std::fmod(t * 30.0, 30.0));
-        NSString* tc = [NSString stringWithFormat:@"LIVE 30 FPS  •  %02d:%02d:%02d", mins, secs, frames];
-        DrawText(tc, NSMakeRect(680, 36, 296, 30), 20, YES, cyan, NSTextAlignmentRight);
-
-        NSRect leftRect = NSMakeRect(48, 92, 448, 390);
-        NSRect rightRect = NSMakeRect(528, 92, 448, 390);
-        FillRounded(leftRect, 16, RGB(0.10f, 0.14f, 0.19f));
-        FillRounded(rightRect, 16, RGB(0.12f, 0.13f, 0.18f));
-
-        for (int eye = 0; eye < 2; ++eye) {
-            NSRect vp = (eye == 0) ? leftRect : rightRect;
-            const double parallax = (eye == 0) ? -8.0 : 8.0;
-            for (int b = 0; b < 14; ++b) {
-                double phase = t * 2.4 + b * 0.42;
-                double h = 60.0 + 110.0 * (0.5 + 0.5 * std::sin(phase));
-                double x = vp.origin.x + 26.0 + b * 29.0 + parallax * std::cos(t * 1.5);
-                double y = vp.origin.y + 210.0 - h * 0.5;
-                NSColor* barColor = (eye == 0)
-                    ? RGB(0.22f + 0.04f * b, 0.62f, 0.85f, 0.88f)
-                    : RGB(0.90f, 0.48f + 0.025f * b, 0.26f, 0.88f);
-                FillRounded(NSMakeRect(x, y, 20, h), 6, barColor);
-            }
-
-            double rx = vp.origin.x + vp.size.width * 0.5 + std::sin(t * 1.7) * 90.0 + parallax;
-            double ry = vp.origin.y + vp.size.height * 0.5 + std::cos(t * 1.2) * 55.0;
-            FillRounded(NSMakeRect(rx - 14, ry - 14, 28, 28), 14,
-                        (eye == 0) ? cyan : amber);
-
-            DrawText((eye == 0) ? @"LEFT EYE STREAM" : @"RIGHT EYE STREAM",
-                     NSMakeRect(vp.origin.x + 20, vp.origin.y + 16, 260, 28),
-                     20, YES, white);
-        }
-
-        FillRounded(NSMakeRect(48, 502, 928, 76), 12, RGB(0.09f, 0.12f, 0.15f));
-        DrawText(@"Drop an .mp4/.mov in ~/Movies (or set NEWT_VIDEO_PATH) for video playback, or connect a camera.",
-                 NSMakeRect(68, 514, 888, 28), 19, NO, white);
-        DrawText(@"Trigger / Select cycles Media source  •  Menu button toggles Pippin dashboard",
-                 NSMakeRect(68, 544, 888, 24), 17, NO, muted);
+        DrawText(@"Media", NSMakeRect(48, 28, 650, 44), 34, YES, RGB(0.94f, 0.96f, 0.95f));
+        DrawText(selected ? @"Waiting for the selected video…" : @"No video selected",
+                 NSMakeRect(80, 250, 864, 50), 28, YES, RGB(0.94f, 0.96f, 0.95f), NSTextAlignmentCenter);
+        DrawText(@"Choose a video using Media in the headset or Add Media on your Mac.",
+                 NSMakeRect(80, 325, 864, 60), 20, NO, RGB(0.60f, 0.66f, 0.70f), NSTextAlignmentCenter);
     });
 
     _manager->PublishImage(std::move(img));

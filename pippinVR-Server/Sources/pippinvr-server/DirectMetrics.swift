@@ -28,12 +28,24 @@ enum DirectMetricEvent {
     case newtStages(waitMs: Double, inputMs: Double, prepareMs: Double, renderMs: Double, periodMs: Double)
     case decoded(frame: Int, predictionDeltaMs: Double)
     case metalFX(input: String, output: String)
+    case cameraStalled(stream: Int, skipped: UInt64)
+    case cameraRecovered(stream: Int, waitMs: Double, skipped: UInt64)
 }
 
 enum DirectMetricsParser {
     static func parse(line rawLine: String) -> DirectMetricEvent? {
         let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !line.isEmpty else { return nil }
+
+        if let groups = captures(in: line, pattern: #"CAMERA_DECODE stream ([0-9]+): stalled, ([0-9]+) frames without a usable keyframe"#),
+           groups.count == 2, let stream = Int(groups[0]), let skipped = UInt64(groups[1]) {
+            return .cameraStalled(stream: stream, skipped: skipped)
+        }
+        if let groups = captures(in: line, pattern: #"CAMERA_RECOVERY stream ([0-9]+): keyframe received ([0-9.]+) ms after the wait began, ([0-9]+) frames skipped"#),
+           groups.count == 3, let stream = Int(groups[0]), let wait = Double(groups[1]), wait.isFinite,
+           let skipped = UInt64(groups[2]) {
+            return .cameraRecovered(stream: stream, waitMs: wait, skipped: skipped)
+        }
 
         if line.contains("\"source\"") && line.contains("questlink"),
            let data = line.data(using: .utf8),
@@ -97,6 +109,8 @@ enum DirectMetricsParser {
 
     private static let expressions: [String: NSRegularExpression] = {
         let patterns = [
+            #"CAMERA_DECODE stream ([0-9]+): stalled, ([0-9]+) frames without a usable keyframe"#,
+            #"CAMERA_RECOVERY stream ([0-9]+): keyframe received ([0-9.]+) ms after the wait began, ([0-9]+) frames skipped"#,
             #"Avg: tx ([0-9.]+)ms, encode [0-9.]+ms.*encoded=([0-9]+).*stage=([0-9.]+)ms"#,
             #"offset=([0-9.]+)ms"#,
             #"rendered ([0-9]+) frames \(([0-9.]+) fps"#,
@@ -120,6 +134,13 @@ enum DirectMetricsParser {
     }
 }
 
+struct DirectCameraReport {
+    let date: Date
+    let waiting: Bool
+    let skipped: UInt64
+    let waitMs: Double?
+}
+
 @MainActor
 final class DirectMetricsStore: ObservableObject {
     @Published private(set) var encodeSamples: [DirectEncodeSample] = []
@@ -128,6 +149,7 @@ final class DirectMetricsStore: ObservableObject {
     @Published private(set) var latestDecodePredictionDeltaMs: Double?
     @Published private(set) var metalFXDescription: String?
     @Published private(set) var lastUpdated: Date?
+    @Published private(set) var cameraReports: [Int: DirectCameraReport] = [:]
 
     nonisolated static let localLogNotification = Notification.Name("PippinVR.DirectMetricsLog")
     private var logSubscription: AnyCancellable?
@@ -161,9 +183,12 @@ final class DirectMetricsStore: ObservableObject {
 
     nonisolated static func publishLocalLog(_ line: String) {
         guard line.contains("rendered ") || line.contains("frame stages avg ms:") ||
-              line.contains("MetalFX Spatial Scaler active") else { return }
+              line.contains("MetalFX Spatial Scaler active") || line.contains("CAMERA_DECODE stream") ||
+              line.contains("CAMERA_RECOVERY stream") else { return }
         NotificationCenter.default.post(name: localLogNotification, object: line)
     }
+
+    func clearCameraReports() { cameraReports.removeAll() }
 
     func start() {
         guard timer == nil else { return }
@@ -226,6 +251,10 @@ final class DirectMetricsStore: ObservableObject {
             latestDecodePredictionDeltaMs = deltaMs
         case let .metalFX(input, output):
             metalFXDescription = "\(input) → \(output)"
+        case let .cameraStalled(stream, skipped):
+            if (0...1).contains(stream) { cameraReports[stream] = DirectCameraReport(date: date, waiting: true, skipped: skipped, waitMs: nil) }
+        case let .cameraRecovered(stream, waitMs, skipped):
+            if (0...1).contains(stream) { cameraReports[stream] = DirectCameraReport(date: date, waiting: false, skipped: skipped, waitMs: waitMs) }
         }
     }
 

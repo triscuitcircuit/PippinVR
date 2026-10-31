@@ -1,0 +1,201 @@
+#+AUTHOR: Triscuitcircuit
+#+DATE: \today
+#+OPTIONS: h:3
+#+TITLE: Local integration API (version 1)
+
+* Local integration API
+** Setup
+In Direct USB mode, enable *Settings → Apps & Add-ons → Add-ons → Local integration API*. It is off by default. Running an installed executable add-on also starts it for that session.
+
+The service listens only on =127.0.0.1= and writes the port and a per-run token to =~/Library/Application Support/PippinVR/API/connection.json=. The directory and file are restricted to the current macOS user. Treat the token as a password; do not post the file in bug reports. Other processes running as the same user may be able to read it. Disabling the API removes the connection file and disconnects clients.
+
+** Protocol
+Connect over TCP and send one UTF-8 JSON object per line. Each request needs =apiVersion: 1=, a string =id=, the =token=, and a =method=. Responses contain the same =id=, =ok=, and either =result= or =error=. Invalid credentials, malformed envelopes, and messages over 64 KiB close the connection.
+
+- =status= returns whether the Direct USB session is running and lists supported methods. A running session does not confirm that the headset is displaying video.
+- =display.create= takes =displayId= (a connection-local lowercase ID) and =index= (0–23), and creates a 960×600 macOS virtual desktop with a small VR screen orbiting its initial position. =display.remove= takes the same =displayId=. Displays belong to the connection and are removed when it disconnects; existing screens count toward the 24-screen limit. Creating a display can take several seconds. Each active desktop consumes capture resources and changes the Mac's display layout.
+- =input.controllers= returns the latest left and right controller snapshots, updating at up to about 30 Hz while polled. The first response may be =available: false=; retry. A snapshot has =focused= and =predictedDisplayTimeNs= (an OpenXR predicted display time, as a string, not wall-clock time). Each side has =trigger= and =squeeze= (objects with =active= and =value=), =stick= (=active=, =x=, =y=), and =primary=, =secondary=, =stickClick=, =menuClick= (objects with =active= and =pressed=). Primary is X/A and secondary is Y/B on left/right Quest controllers; menu click is bound on the left only. =select= and =menu= are the dashboard's combined actions. =aim= and =gripPose= are null when unavailable, otherwise they contain =position= [x,y,z] in meters and =orientation= [x,y,z,w] quaternion in the OpenXR application reference space (stage when available, otherwise local; its origin can change when recentered). Poses may represent other runtime input sources, including hands; validity does not prove a controller is connected. =focused=false= means the app cannot read active actions.
+  This is a snapshot interface, not a button-event queue: short presses and intermediate samples can be missed, and timing is not guaranteed. The API does not consume buttons; they continue to operate PippinVR. A private local bridge temporarily stores snapshots while clients request them; they are removed after polling stops or the API is disabled. Other processes running as the same macOS user may read them.
+- =camera.frame= takes =eye= (="left"= or ="right"=). Enable *API camera access* separately and open the passthrough portal. Poll for frames; =available: false= means no fresh frame is ready. Available responses contain base64 JPEG =data=, =width=, =height=, =eye=, and =captureTimestampNs= as a string (runtime timestamp; do not assume wall-clock time). Images are raw camera views, scaled to at most 320 pixels on the longest side and updated at most twice per second. They are not a stereo-synchronized API or suitable for precise timing.
+- =model.load= takes =modelId= and an absolute local =path= to a readable USDZ, USD, OBJ, glTF, or GLB (up to 512 MiB). Optional =rotation= accepts =fixed=, =spin=, or =faceUser= with =degreesPerSecond= from −180 to 180 (default 30). By default the model appears at PippinVR's default model location and can be adjusted with headset controls. Optional =panelId= attaches it above a panel owned by the same connection; =size= controls its longest dimension in meters (0.05–1, default 0.22). An attached model follows its panel, is hidden when the panel is absent, and is not independently grabbable. The response means *queued*, not rendered. Poll =model.status= with =modelId= for =pending=, =ready=, =removed=, or =error=. =ready= means the renderer loaded the model, not that it is in view. Large models can briefly pause rendering during loading. Each connection may own up to four models, subject to PippinVR's shared 16-model limit.
+- =model.remove= takes =modelId=. Owned models are removed after the request or connection closes and are excluded from the saved scene. A model manually removed in the headset reports =removed=.
+- =panel.set= takes =panelId= and =panel= (title, lines, buttons, and optional anchor, position, orientation and rotation). It creates or updates a panel owned by this connection. The response gives its event identifier. Each connection can create up to eight panels.
+  Optional =position= is =[x,y,z]= in meters relative to the anchor, each coordinate within ±5. =orientation= is a unit quaternion =[x,y,z,w]= relative to the anchor. =rotation= is an object with =mode= =fixed=, =spin=, or =faceUser=; =spin= accepts =degreesPerSecond= from −180 to 180 (default 30), rotating around the panel's local vertical axis. =faceUser= turns the panel horizontally toward the headset and overrides the supplied orientation. A head anchor follows the headset, a dashboard anchor follows the dashboard, and a world anchor is placed relative to the headset when first shown and remains there. Changing a world panel's position re-places it relative to the current headset pose. Animation runs in the renderer; state updates use the existing file polling, so position updates are not a high-rate animation channel. These transforms apply to add-on panels, not desktop screens or separately loaded 3D models. Optional =decoration= adds a rendered 3D shape above the panel: =shape= is =cube=, =cutCube=, or =fractal=; =size= is 0.04–0.3 meters; =color= is an RGB array from 0–1; and =degreesPerSecond= is −180…180. The carved and fractal shapes use repeated spatial removal and share geometry between panels.
+- =panel.image= takes =panelId= and base64-encoded PNG or JPEG =data= for an owned panel. Images must be at most 36 KiB, 2048 pixels per side, and two megapixels. Updates are limited to two per second per panel and four per second across the API. This is for low-rate visualization; the headset panel renderer polls periodically and may skip intermediate images.
+- =panel.remove= takes =panelId= and removes a panel owned by this connection. All its panels are removed on disconnect.
+- =audio.push= takes base64-encoded =data=: little-endian 48 kHz, stereo, interleaved float32 PCM, in 10–80 ms chunks (a multiple of 480 frames). Samples must be finite and between -1 and 1. Send at playback speed; the queue is bounded, and the runtime may discard late audio. A successful response means the chunk was queued, not that it was heard. Only one API client can send audio at a time.
+- =audio.spatial= takes base64 =data= containing 10–80 ms of 48 kHz mono float32 PCM, in 10 ms blocks. Optional =mode= is =hrtf= (default), =hrtfHQ=, or =cues=. For HRTF, =x=, =y=, =z= specify a head-relative position in meters: right is +X, up is +Y, forward is −Z; default =(0, 0, -1)=. Position stays relative to the head as it turns. HRTF modes apply inverse distance attenuation: =referenceDistance= (0.01–100 m, default 1) sets the distance at which falloff starts, and =rolloff= (0–10, default 1) controls its strength; set =rolloff= to 0 to disable falloff. With the defaults, 2 m is half the amplitude of 1 m. Gain changes ramp over 10 ms. Direct =cues= mode ignores distance. Reverb is disabled. =gain= is 0–1 (default 1). =itdUs= is −2000…2000 microseconds: positive delays the left channel. =ildDb= is −24…24 dB: positive makes the left channel louder by attenuating the right. Both default to zero.
+  In =cues= mode the mono signal is duplicated and those cues are applied directly. In HRTF modes they are *additional* adjustments to the HRTF’s own cues, not absolute measurements. Fractional delays use linear interpolation; parameter changes apply at chunk boundaries without smoothing. The audio queue, mixing, clipping, headset output and acoustics prevent guaranteed timing or sound pressure levels. For experiments, isolate other audio and measure/calibrate the entire path; this is not a calibrated research instrument. A queued response does not confirm rendering or playback, and underruns may drop chunks.
+- =audio.release= releases the client's audio slot and removes its pending chunks. Disconnecting does the same; already buffered headset audio may continue briefly. Audio mixes with Mac audio and is available independently of the Mac audio mode.
+- =events.poll= returns recent button and close events belonging to this connection's panels. Events use the existing shared, bounded event log: poll frequently and expect loss during log rotation or disconnection. The event identifier is the =panel= value returned by =panel.set=.
+
+The audio stream waits for about 40 ms of buffered samples to start. Pad shorter sounds with silence. This first version does not report audible playback or provide sample-accurate timing.
+
+** Example and limitations
+See [[file:pippin_client.py][the Python client]] for a working example. Other languages can use the same protocol; a MATLAB-specific package is not yet included. Screen capture, high-frame-rate video, and precise timing are not supported by this version. Camera snapshots are briefly stored in a user-private local bridge directory and removed after requests stop or when API camera access is disabled; other processes running as the same user may access them.
+
+** Rotating panel example
+#+begin_src python :tangle no
+client.request("panel.set", panelId="rotating", panel={
+    "title": "Rotating panel", "lines": [], "buttons": [], "anchor": "world",
+    "position": [0, 0, -1], "orientation": [0, 0, 0, 1],
+    "rotation": {"mode": "spin", "degreesPerSecond": 20}
+})
+#+end_src
+
+** Controller example
+Poll while the headset session is focused. A missing snapshot or an inactive control means it is unavailable, not necessarily released.
+
+#+begin_src python :tangle no
+import time
+from pippin_client import PippinClient
+
+with PippinClient() as client:
+    while True:
+        state = client.controllers()
+        if state.get("available") and state.get("focused"):
+            right = state["right"]
+            print("A:", right["primary"], "trigger:", right["trigger"], "aim:", right["aim"])
+        time.sleep(0.05)
+#+end_src
+
+** Camera example
+With API camera access enabled and the passthrough portal open, poll for a fresh frame:
+
+#+begin_src python :tangle no
+import time
+from pippin_client import PippinClient
+
+with PippinClient() as client:
+    while True:
+        frame = client.camera_frame("left")
+        if frame["available"]:
+            print(frame["width"], frame["height"], len(frame["data"]))
+            break  # frame["data"] contains JPEG bytes
+        time.sleep(0.25)
+#+end_src
+
+** Audio example
+With the local integration API enabled and a Direct USB session running, run this from the API example directory. It sends a quiet one-second tone; wait for the sound to finish before closing the client.
+
+#+begin_src python :tangle no
+import math
+import struct
+import time
+from pippin_client import PippinClient
+
+with PippinClient() as client:
+    for chunk in range(25):
+        samples = []
+        for i in range(1920):
+            value = 0.08 * math.sin(2 * math.pi * 440 * (chunk * 1920 + i) / 48000)
+            samples.extend((value, value))
+        client.push_audio(struct.pack("<" + "f" * len(samples), *samples))
+        time.sleep(0.04)
+    time.sleep(0.3)
+    client.release_audio()
+#+end_src
+
+** Spatial audio example
+Send a mono block with a head-relative HRTF source or use =mode="cues"= for direct ITD/ILD processing. As with stereo audio, send several blocks at playback speed and pad short sounds to reach the initial 40 ms buffer.
+
+#+begin_src python :tangle no
+client.push_spatial_audio(mono_float32_bytes, mode="hrtfHQ", x=0, z=-3, gain=0.2,
+                          reference_distance=1, rolloff=1)
+client.push_spatial_audio(mono_float32_bytes, mode="cues", itd_us=300, ild_db=4, gain=0.2)
+#+end_src
+
+** Python client
+This block tangles to [[file:pippin_client.py][pippin_client.py]]:
+#+begin_src python :tangle pippin_client.py
+"""Small example client for PippinVR's local integration API."""
+import base64
+import json
+import os
+import socket
+from pathlib import Path
+
+
+class PippinClient:
+    def __init__(self, connection_file=None):
+        path = Path(connection_file) if connection_file else Path.home() / "Library/Application Support/PippinVR/API/connection.json"
+        config = json.loads(path.read_text())
+        if config.get("apiVersion") != 1 or config.get("host") != "127.0.0.1":
+            raise ValueError("Unsupported or non-local PippinVR API")
+        self.token = config["token"]
+        self.socket = socket.create_connection((config["host"], config["port"]), timeout=5)
+        self.reader = self.socket.makefile("rb")
+        self.next_id = 0
+
+    def request(self, method, **fields):
+        self.next_id += 1
+        request_id = str(self.next_id)
+        request = {"apiVersion": 1, "token": self.token, "id": request_id, "method": method, **fields}
+        self.socket.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
+        line = self.reader.readline(65537)
+        if not line or len(line) > 65536:
+            raise ConnectionError("PippinVR closed the connection or sent a large response")
+        reply = json.loads(line)
+        if reply.get("id") != request_id:
+            raise ConnectionError("Unexpected response")
+        if not reply.get("ok"):
+            raise RuntimeError(reply.get("error", "Request failed"))
+        return reply["result"]
+
+    def set_image(self, panel_id, image_bytes):
+        return self.request("panel.image", panelId=panel_id, data=base64.b64encode(image_bytes).decode("ascii"))
+
+    def load_model(self, model_id, path, mode="fixed", degrees_per_second=30, panel_id=None, size=0.22):
+        options = {"panelId": panel_id, "size": size} if panel_id is not None else {}
+        return self.request("model.load", modelId=model_id, path=str(Path(path).resolve()),
+                            rotation={"mode": mode, "degreesPerSecond": degrees_per_second}, **options)
+
+    def model_status(self, model_id):
+        return self.request("model.status", modelId=model_id)
+
+    def remove_model(self, model_id):
+        return self.request("model.remove", modelId=model_id)
+
+    def controllers(self):
+        return self.request("input.controllers")
+
+    def camera_frame(self, eye="left"):
+        frame = self.request("camera.frame", eye=eye)
+        if frame.get("available"):
+            frame["data"] = base64.b64decode(frame["data"])
+        return frame
+
+    def push_audio(self, pcm_float32_stereo):
+        return self.request("audio.push", data=base64.b64encode(pcm_float32_stereo).decode("ascii"))
+
+    def push_spatial_audio(self, pcm_float32_mono, mode="hrtf", x=0, y=0, z=-1, itd_us=0, ild_db=0, gain=1,
+                           reference_distance=1, rolloff=1):
+        return self.request("audio.spatial", data=base64.b64encode(pcm_float32_mono).decode("ascii"),
+                            mode=mode, x=x, y=y, z=z, itdUs=itd_us, ildDb=ild_db, gain=gain,
+                            referenceDistance=reference_distance, rolloff=rolloff)
+
+    def release_audio(self):
+        return self.request("audio.release")
+
+    def close(self):
+        self.reader.close()
+        self.socket.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
+if __name__ == "__main__":
+    with PippinClient(os.environ.get("PIPPINVR_API_CONNECTION")) as client:
+        print(client.request("status"))
+        client.request("panel.set", panelId="example", panel={
+            "title": "External application", "lines": ["This panel came from a local API client."],
+            "buttons": [{"id": "hello", "label": "Hello"}], "anchor": "dashboard"
+        })
+        print("Open the headset dashboard and press Hello; press Enter here to read events and close.")
+        input()
+        print(client.request("events.poll"))
+#+end_src
